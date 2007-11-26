@@ -1,0 +1,68 @@
+# Copyright (C) 2007 Free Software Foundation, Inc.
+# 
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; version 2.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software Foundation,
+# Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+#
+# Author: Wolfgang Beck <bewo at users.berlios.de> 2007
+
+VER := 0.95
+CFLAGS := -g -Wall -O3 -MMD 
+LDFLAGS := -lraw1394 -liec61883 -ldv
+
+datarot=${prefix}/share
+bindir=/usr/local${exec_prefix}/bin
+mandir=/usr/local${datarootdir}/man
+
+SRC := \
+scale.c \
+util.c \
+dv4l.c
+
+INCS := \
+scale.h \
+util.h
+
+ARCHIVE := \
+CHANGES \
+LICENSE \
+Makefile.in \
+config.h.in \
+configure.ac \
+configure \
+dv4l.1 \
+$(SRC) \
+$(INCS)
+
+OBJ := $(SRC:.c=.o)
+
+dv4l: $(OBJ)
+	$(CC) $(LDFLAGS) -o $@ $(OBJ)
+
+tar:
+	mkdir dv4l-$(VER)
+	cp $(ARCHIVE) dv4l-$(VER)
+	tar cvzf dv4l-$(VER).tar.gz dv4l-$(VER)
+	rm -rf dv4l-$(VER)
+
+clean:
+	rm -f *.o core dv4l
+
+install: dv4l
+	install -D -m 0750 -g video dv4l $(bindir)
+	install -D -m 0644 dv4l.1 $(mandir)/man1
+
+uninstall:
+	rm $(bindir)/dv4l
+	rm $(mandir)/man1/dv4l.1
+
+-include *.d
