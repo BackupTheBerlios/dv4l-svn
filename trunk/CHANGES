@@ -1,0 +1,9 @@
+0.95
+
+- removed memory-leaking gstreamer from code base
+
+0.91
+
+- fixed some problems with initial parameter settings
+- new option -f <framerate> 
+- fixed excessive gstreamer buffering
