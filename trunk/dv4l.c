@@ -18,13 +18,13 @@
  */
 
 
-#include <linux/videodev.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <linux/videodev.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <libgen.h>
