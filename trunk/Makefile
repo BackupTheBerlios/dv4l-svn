@@ -15,7 +15,7 @@
 #
 # Author: Wolfgang Beck <bewo at users.berlios.de> 2007
 
-VER := 0.95
+VER := 0.96
 CFLAGS := -g -Wall -O3 -MMD 
 LDFLAGS := -lraw1394 -liec61883 -ldv
 
