@@ -24,6 +24,7 @@ bindir=/usr/local${exec_prefix}/bin
 mandir=/usr/local${datarootdir}/man
 
 SRC := \
+palettes.c \
 scale.c \
 util.c \
 dv4l.c

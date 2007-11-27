@@ -7,7 +7,7 @@ dv4l \- make a dv1394 camcorder available for video4linux programs
 .BI "dv4l [" options "]"
 .sp
 options (shortest form):
-.B [\-cdvh]
+.B [\-cdrvh]
 
 .SH DESCRIPTION
 .B dv4l
@@ -48,6 +48,10 @@ is omitted,
 .B dv4l
 will automatically look for an appropriate device.
 .TP
+.BI "\-r, \-\-rgb\-only
+Set this option to prevent V4L applications from choosing 
+YUV palettes. Try this option if you get low frame rates.
+.TP
 .BI "\-v, \-\-verbose" \ level
 Set the amount of debugging messages. A level of 0 means no output at all, 1
 is the default, 3 enables all messages. 
@@ -59,11 +63,11 @@ displays a help message
 .B dv4l
 does not support adjustment of color, brightness and similar parameters.
 
-It supports only RGB24, not grey and YUV palettes. Some V4L programs
-don't work as they don't support RGB24.
+It supports only RGB24 and YUV420P palettes. Some V4L programs
+may not work as they require different palettes.
 
 It supports only a single dv1394 camera.
 
-Kopete seems to have problems with vloopback and does NOT work
-with dv4l.
+Gqcam, kopete, and Skype v2.0beta seem to have problems with vloopback
+and do NOT work with dv4l.
 

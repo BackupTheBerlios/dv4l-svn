@@ -24,6 +24,7 @@ bindir=@prefix@@bindir@
 mandir=@prefix@@mandir@
 
 SRC := \
+palettes.c \
 scale.c \
 util.c \
 dv4l.c

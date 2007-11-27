@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <linux/videodev.h>
+#include <assert.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <libgen.h>
@@ -38,6 +39,7 @@
 #include <libdv/dv.h>
 #include "config.h"
 #include "scale.h"
+#include "palettes.h"
 #include "util.h"
 
 #define MAXW (720 * 2)
@@ -46,7 +48,8 @@
 #define MINH 96
 #define MAXFRAMES 2
 
-#define VIDEODEV "/dev/v4l/video"
+#define VIDEODEV "/dev/video"
+#define VIDEOV4LDEV "/dev/v4l/video"
 #define VIDIOCSINVALID  _IO('v',BASE_VIDIOCPRIVATE+1)
 #define FRM_EMPTY (-1)
 #define FRM_RDY4SYNC (-2)
@@ -76,6 +79,7 @@ typedef struct {
     int v_wr;
     int v_rd;
     int v_cnt;
+    int rgbonly;
     struct video_capability vcap;
     struct video_channel vchan;
     struct video_picture vpic;
@@ -84,11 +88,6 @@ typedef struct {
 
 
 static int vsync_set[MAXFRAMES];
-
-static inline int max(int x, int y)
-{
-    return x > y ? x : y;
-}
 
 static unsigned char **buf_enqueue(
 	vid_context_t *ctx,
@@ -244,24 +243,29 @@ log("VIDIOCGMBUF\n");
             ioctl(fd, nr, &p->vwin);
             break;
 	case VIDIOCSPICT:
-log("VIDIOCSPICT\n");
 	    spic = (const struct video_picture *)buf;
-	    if(spic->palette != p->vpic.palette) {
-		ioctl(fd, VIDIOCSINVALID);
-		break;
+log("VIDIOCSPICT depth %d palette %d\n", spic->depth, spic->palette);
+	    if(spic->palette != VIDEO_PALETTE_RGB24) {
+		if(p->rgbonly || spic->palette != VIDEO_PALETTE_YUV420P) {
+		    ioctl(fd, VIDIOCSINVALID);
+		    break;
+		}
 	    }
+	    p->vpic.palette = spic->palette;
 	    ioctl(fd, nr, buf);
 	    break;
 	case VIDIOCSWIN:
-log("VIDIOCSWIN\n");
 	    swin = (const struct video_window *)buf;
+log("VIDIOCSWIN %dx%d\n", swin->width, swin->height);
 	    if(swin->clips != NULL || swin->clipcount != 0) {
+err("VIDIOCSWIN invalid clip\n");
 		ioctl(fd, VIDIOCSINVALID);
 		break;
 	    }
 	    if(swin->width != p->vwin.width
 	    || swin->height != p->vwin.height) {
 		if(swin->width > MAXW || swin->height > MAXH) {
+err("VIDIOCSWIN invalid size\n");
 		    ioctl(fd, VIDIOCSINVALID);
 		    break;
 		}
@@ -276,6 +280,7 @@ log("VIDIOCSWIN\n");
 	case VIDIOCMCAPTURE:
 	    smmap = (const struct video_mmap *)buf;
 	    if(smmap->format != p->vpic.palette) {
+err("VIDIOCMCAPTURE invalid format %d\n", smmap->format);
 		ioctl(fd, VIDIOCSINVALID);
 	    }
 	    p->vwin.width = smmap->width;
@@ -307,9 +312,11 @@ debug("VIDIOCSYNC %d\n", fnr);
 			/*
 			 * double SYNC on same frame, threaded user app?
 			 */
+debug("double VIDIOCSYNC %d\n", fnr);
 			break;
 		}
 	    } else {
+err("SYNC frame out of range %d\n", fnr);
 		ioctl(fd, VIDIOCSINVALID);
 	    }
 	    break;
@@ -362,6 +369,10 @@ static int scan_dev(char *devname, int sz)
         snprintf(devname, sz, VIDEODEV "%d", i);
         if(checkdev(devname) == 0) return i;
     }
+    for(i = 0; i < 10; ++i) {
+        snprintf(devname, sz, VIDEOV4LDEV "%d", i);
+        if(checkdev(devname) == 0) return i;
+    }
 
     return -1;
 }
@@ -401,11 +412,13 @@ static int frame_recv(
 	    void *arg
 	)
 {
+    static unsigned char *tmp = NULL;
     fcb_arg_t *p;
     vid_context_t *ctx;
     int w;
     int h;
     uint8_t *frame;
+    uint8_t *dst;
     unsigned char *vb;
     int snr;
 
@@ -423,6 +436,7 @@ static int frame_recv(
 	    h = p->dvdec->height;
 	    debug("w %d h %d\n", p->dvdec->width, p->dvdec->height);
 	    frame = malloc(w * h * 3);
+	    tmp = malloc(w * h * 3);
 	    p->frame = malloc(3 * sizeof frame);
 	    p->frame[0] = frame;
 	    p->frame[1] = NULL;
@@ -433,8 +447,6 @@ static int frame_recv(
 	    p->pitches[2] = 0;
 
 	    init_ctx(ctx, w, h);
-	    ctx->vwin.width = w;
-	    ctx->vwin.height = h;
 	} else {
 	    w = ctx->vcap.maxwidth;
 	    h = ctx->vcap.maxheight;
@@ -447,7 +459,16 @@ static int frame_recv(
 				    e_dv_color_rgb,
 				    p->frame,
 				    p->pitches);
-	    scale(p->frame[0], p->dst, w, h, ctx->vwin.width, ctx->vwin.height);
+	    switch(ctx->vpic.palette) {
+		case VIDEO_PALETTE_YUV420P: dst = tmp; break;
+		case VIDEO_PALETTE_RGB24:
+		default:
+		    dst = p->dst;
+		    break;
+	    }
+	    scale(p->frame[0], dst, w, h, ctx->vwin.width, ctx->vwin.height);
+	    palette_conv(dst, p->dst, ctx->vpic.palette, ctx->vwin.width,
+			    ctx->vwin.height);
 	    switch(vsync_set[snr]) {
 		case FRM_EMPTY:
 		    vsync_set[snr] = FRM_RDY4SYNC;
@@ -527,11 +548,12 @@ static struct option long_options[] = {
     { "color-correction", 0, NULL, 'c' },
     { "device", 1, NULL, 'd' },
     { "help", 0, NULL, 'h' },
+    { "rgb-only", 0, NULL, 'r' },
     { "verbose", 1, NULL, 'h' },
     { NULL, 0, NULL, 0 }
 };
 
-static const char *short_options = "cd:h?v:";
+static const char *short_options = "cd:h?rv:";
 
 static void usage(const char *cmd, const char *txt)
 {
@@ -549,6 +571,7 @@ to provide a virtual video4linux camera.\n\
 -c, --color-correction\n\
 		 use this option if red objects look blue\n\
 -d, --device     vloopback-input-device (eg /dev/v4l/video0)\n\
+-r, --rgb-only   disable yuv palette usage for better performance\n\
 -v, --verbose    verbosity-level (0 - no output; 3 - all messages)\n\
 -h, --help       display this help and exit\n",
 cmd, DV4LVERSION);
@@ -557,7 +580,8 @@ cmd, DV4LVERSION);
 
 static void cmdline(
 	int argc,
-	char **argv
+	char **argv,
+	vid_context_t *ctx
     )
 {
     int c;
@@ -566,6 +590,7 @@ static void cmdline(
     char *ep;
     char buf[80];
 
+    ctx->rgbonly = 0;
     for(c = getopt_long(argc, argv, short_options,
                             long_options, &option_index);
         c != -1;
@@ -580,6 +605,9 @@ static void cmdline(
                     strncpy(buf, optarg, sizeof buf);
                 }
                 break;
+	    case 'r':
+		ctx->rgbonly = 1;
+		break;
             case 'v':
                 if(optarg != NULL) {
                     vv = strtol(optarg, &ep, 0);
@@ -607,6 +635,7 @@ int main(int argc, char **argv)
 {
     raw1394handle_t raw;
     vid_context_t ctx;
+    struct timeval tv;
     fd_set rfds;
     fcb_arg_t arg;
     int fd;
@@ -615,12 +644,13 @@ int main(int argc, char **argv)
     int devi;
     int run;
     int sz;
+    int maxfd;
     char buf[1024];
 
     iec61883_dv_fb_t iec;
     dv_decoder_t *dvdec;
 
-    cmdline(argc, argv);
+    cmdline(argc, argv, &ctx);
     /*
      * get a vloopback dev
      */
@@ -638,7 +668,8 @@ int main(int argc, char **argv)
     }
     init_vmbuf(&ctx, vfd);
     signal(SIGIO, SIG_IGN);
-    memset(&vsync_set, -1, sizeof(int) * MAXFRAMES);
+    // init_sig();
+    memset(&vsync_set, FRM_EMPTY, sizeof(int) * MAXFRAMES);
     /*
      * init libraw1394
      */
@@ -674,17 +705,23 @@ int main(int argc, char **argv)
 	exit(-1);
     }
     fd = raw1394_get_fd(raw);
+    maxfd = (fd > vfd ? fd : vfd) + 1;
     get_camsize(fd, raw, &ctx);
+    tv.tv_sec = 0;
+    tv.tv_usec = 12 * 1000;
     FD_ZERO(&rfds);
     run = 1;
     while(run) {
 	FD_SET(vfd, &rfds);
 	FD_SET(fd, &rfds);
-	rv = select(max(vfd, fd) + 1, &rfds, NULL, NULL, NULL);
-	if(rv > 0) {
+	rv = select(maxfd, &rfds, NULL, NULL, &tv);
+	if(rv >= 0) {
+	    if(FD_ISSET(fd, &rfds)) {
+		raw1394_loop_iterate(raw);
+	    }
 	    if(FD_ISSET(vfd, &rfds)) {
 		sz = read(vfd, buf, sizeof buf);
-		if(sz > 0) {
+		if(sz > 3) {
 		    if(do_ioctl(vfd, *(unsigned long *)buf,
 				buf + sizeof(unsigned long), &ctx)) {
 			iec61883_dv_fb_stop(iec);
@@ -701,10 +738,9 @@ int main(int argc, char **argv)
 			    exit(-1);
 			}
 		    }
+		} else {
+		    err("short ioctl");
 		}
-	    }
-	    if(FD_ISSET(fd, &rfds)) {
-		raw1394_loop_iterate(raw);
 	    }
 	} else {
 	    perror("select");
