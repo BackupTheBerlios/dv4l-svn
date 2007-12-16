@@ -15,8 +15,8 @@
 #
 # Author: Wolfgang Beck <bewo at users.berlios.de> 2007
 
-VER := 0.96
-CFLAGS := -g -Wall -O3 -MMD 
+VER := 0.97
+CFLAGS := -Wall -O3 -MMD 
 LDFLAGS := -lraw1394 -liec61883 -ldv
 
 datarot=${prefix}/share
@@ -30,6 +30,7 @@ util.c \
 dv4l.c
 
 INCS := \
+palettes.h \
 scale.h \
 util.h
 

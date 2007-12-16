@@ -1,3 +1,11 @@
+0.97
+
+- 'size' option for programs where memory mapped IO does not work
+
+0.96
+
+- yuv420p support added
+
 0.95
 
 - removed memory-leaking gstreamer from code base

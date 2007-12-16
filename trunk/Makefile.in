@@ -16,7 +16,7 @@
 # Author: Wolfgang Beck <bewo at users.berlios.de> 2007
 
 VER := @PACKAGE_VERSION@
-CFLAGS := -g -Wall -O3 -MMD 
+CFLAGS := -Wall -O3 -MMD 
 LDFLAGS := -lraw1394 -liec61883 -ldv
 
 datarot=@datarootdir@
@@ -30,6 +30,7 @@ util.c \
 dv4l.c
 
 INCS := \
+palettes.h \
 scale.h \
 util.h
 

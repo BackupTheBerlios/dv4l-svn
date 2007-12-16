@@ -19,13 +19,13 @@
 #ifndef _palettes_h
 #define _palettes_h
 
-void rgb24toyuv420p(
+int rgb24toyuv420p(
 	const unsigned char * const rgb,
 	unsigned char *dst,
 	int w,
 	int h
     );
-static inline void palette_conv(
+static inline int palette_conv(
 	const unsigned char * const rgb,
 	unsigned char *dst,
 	int palette,
@@ -35,11 +35,10 @@ static inline void palette_conv(
 {
     switch(palette) {
 	case VIDEO_PALETTE_YUV420P:
-	    rgb24toyuv420p(rgb, dst, w, h);
-	    break;
+	    return rgb24toyuv420p(rgb, dst, w, h);
 	case VIDEO_PALETTE_RGB24:
 	default:
-	    break;
+	    return w * h * 3;
     }
 }
 

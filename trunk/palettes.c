@@ -32,7 +32,7 @@ static inline unsigned char get_v(const unsigned char * const rgb)
     return ((112 * rgb[0] - 94 * rgb[1] - 18 * rgb[2] + 128) >> 8) + 128;
 }
 
-void rgb24toyuv420p(
+int rgb24toyuv420p(
 	const unsigned char *rgb,
 	unsigned char *dst,
 	int w,
@@ -70,6 +70,8 @@ void rgb24toyuv420p(
 	    t += 3;
 	}
     }
+
+    return ud - dst;
 }
 
 

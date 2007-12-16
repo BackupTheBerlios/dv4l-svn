@@ -1,4 +1,4 @@
-AC_INIT(dv4l, 0.96, dv4l-0.96.tar.gz)
+AC_INIT(dv4l, 0.97, dv4l-0.97.tar.gz)
 
 AC_CHECK_HEADER([libraw1394/raw1394.h],
     [AC_DEFINE(HAVE_RAW1394, 1,
