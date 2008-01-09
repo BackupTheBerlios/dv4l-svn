@@ -47,9 +47,14 @@ $(INCS)
 
 OBJ := $(SRC:.c=.o)
 
+all: dv4l libdv4l.so
+
 dv4l: $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ)
 
+libdv4l.so: interdv4l.c
+	$(CC) -Wall -shared -fpic -Wl,-soname $@ -ldl $< -o $@
+	
 tar:
 	mkdir dv4l-$(VER)
 	cp $(ARCHIVE) dv4l-$(VER)
