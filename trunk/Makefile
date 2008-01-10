@@ -52,9 +52,9 @@ all: dv4l libdv4l.so
 dv4l: $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ)
 
-libdv4l.so: interdv4l.c scale.o palettes.o
-	$(CC) -Wall -shared -fpic -Wl,-soname,$@ -ldl -lraw1394 \
-	-liec61883 -ldv $< scale.c palettes.c -o $@
+libdv4l.so: interdv4l.c scale.c palettes.c
+	$(CC) -Wall -shared -fpic -Wl,-soname,$@ \
+	-ldl -lraw1394 -liec61883 -ldv $< scale.c palettes.c -o $@
 	
 tar:
 	mkdir dv4l-$(VER)
