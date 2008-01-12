@@ -1,0 +1,9 @@
+#!/bin/sh
+
+cat > dv4lstart << EOF
+# export LD_DEBUG=bindings
+# export DV4L_VERBOSE=3
+export LD_PRELOAD="$1/libdv4l.so" 
+\$*
+EOF
+chmod 755 dv4lstart

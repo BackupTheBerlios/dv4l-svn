@@ -15,7 +15,7 @@
 #
 # Author: Wolfgang Beck <bewo at users.berlios.de> 2007
 
-VER := 0.97
+VER := 0.98
 CFLAGS := -Wall -O3 -MMD 
 LDFLAGS := -lraw1394 -liec61883 -ldv
 
@@ -41,7 +41,10 @@ Makefile.in \
 config.h.in \
 configure.ac \
 configure \
+mkdv4lstart \
+interdv4l.c \
 dv4l.1 \
+dv4lstart.1 \
 $(SRC) \
 $(INCS)
 
@@ -52,10 +55,13 @@ all: dv4l libdv4l.so
 dv4l: $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ)
 
-libdv4l.so: interdv4l.c scale.c palettes.c
+libdv4l.so: interdv4l.c scale.c palettes.c util.c $(INCS)
 	$(CC) -Wall -shared -fpic -Wl,-soname,$@ \
-	-ldl -lraw1394 -liec61883 -ldv $< scale.c palettes.c -o $@
+	-ldl -lraw1394 -liec61883 -ldv $< scale.c palettes.c util.c -o $@
 	
+dv4lstart:
+	./mkdv4lstart /usr/local${exec_prefix}/lib
+
 tar:
 	mkdir dv4l-$(VER)
 	cp $(ARCHIVE) dv4l-$(VER)
@@ -63,14 +69,20 @@ tar:
 	rm -rf dv4l-$(VER)
 
 clean:
-	rm -f *.o core dv4l
+	rm -f *.o core dv4l dv4lstart
 
-install: dv4l
+install: dv4l dv4lstart libdv4l.so
 	install -D -m 0750 -g video dv4l $(bindir)
 	install -D -m 0644 dv4l.1 $(mandir)/man1
+	install -D -m 0644 dv4lstart.1 $(mandir)/man1
+	install -D -m 0755 libdv4l.so /usr/local${exec_prefix}/lib
+	install -D -m 0755 dv4lstart /usr/local${exec_prefix}/bin
 
 uninstall:
-	rm $(bindir)/dv4l
-	rm $(mandir)/man1/dv4l.1
+	rm -f $(bindir)/dv4l
+	rm -f $(mandir)/man1/dv4l.1
+	rm -f $(mandir)/man1/dv4lstart.1
+	rm -f /usr/local${exec_prefix}/bin/dv4lstart
+	rm -f /usr/local${exec_prefix}/lib/libdv4l.so
 
 -include *.d

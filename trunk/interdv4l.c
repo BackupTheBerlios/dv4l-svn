@@ -26,10 +26,12 @@
 #include <dirent.h>
 #include "scale.h"
 #include "palettes.h"
+#include "util.h"
 
 #define VIDEOGROUP "video"
 #define VIDEODEV "/dev/video0"
-static int fake_fd;
+#define VIDEOV4LDEV "/dev/v4l/video0"
+static int fake_fd = -1;
 
 typedef struct {
     int vfd;
@@ -66,10 +68,117 @@ static int is_videodev(const char *name)
     ++d;
     strcpy(d, bname);
 
-    return (strcmp(VIDEODEV, resolved) == 0);
+    return (strcmp(VIDEODEV, resolved) == 0)
+    || (strcmp(VIDEOV4LDEV, resolved) == 0);
 }
 
-#define MKSTAT(name, stat) \
+extern char **environ;
+
+#define PRELOAD "LD_PRELOAD="
+static void strip_environ()
+{
+    char **cp;
+    char **dp;
+
+    for(cp = environ, dp = NULL; *cp != NULL; ++cp) {
+	if(strncmp(*cp, PRELOAD, (sizeof PRELOAD) - 1) == 0) {
+	    dp = cp;
+	}
+    }
+    if(dp != NULL) {
+	memcpy(dp, dp + 1, (cp - dp) * sizeof cp);
+    }
+}
+
+#define LIBNAME "LD_PRELOAD=./libdv4l.so"
+static char **addlib(char *const envp[])
+{
+    char * const *cp;
+    int sz;
+    char **envp2;
+
+    for(cp = (char *const *)envp; *cp != NULL; ++cp) ;
+    sz = cp - envp;
+    envp2 = malloc((sz + 1) * sizeof *cp);
+    if(envp2 == NULL) return NULL;
+    memcpy(envp2, envp, sz * sizeof *cp);
+    envp2[sz] = LIBNAME;
+    envp2[sz + 1] = NULL;
+    #if 0
+    int i;
+    for(i = 0; envp2[i] != NULL; ++i) debug("*cp <%s>\n", envp2[i]);
+    #endif
+
+    return envp2;
+}
+
+char *getenv(const char *name)
+{
+    static char *(*orig)(const char *name) = NULL;
+    const char *deb;
+    char *err;
+    int lvl;
+
+    if(orig == NULL) {
+	orig = dlsym(RTLD_NEXT, "getenv");
+	if(orig == NULL) return NULL;
+	strip_environ();
+	deb = getenv("DV4L_VERBOSE");
+	if(deb != NULL) {
+	    lvl = strtol(deb, &err, 0);
+	    if(*deb != '\0' && *err == '\0') {
+		set_tracelevel(lvl);
+		log("set tracelevel to %d\n", lvl);
+	    }
+	}
+    }
+
+    if(strcmp(name, "LD_PRELOAD") == 0) {
+	return NULL;
+    } else {
+	return orig(name);
+    }
+}
+
+int execve(const char *fname, char *const argv[], char *const envp[])
+{
+    static int (*orig)
+	(const char *fname, char *const argv[], char *const envp[]) = NULL;
+    char **envp2;
+    int rv;
+
+    if(orig == NULL) {
+	orig = dlsym(RTLD_NEXT, "execve");
+	if(orig == NULL) return -1;
+    };
+debug("execve <%s>\n", fname);
+    envp2 = addlib(envp);
+    rv = orig(fname, argv, envp2);
+    free(envp2);
+
+    return rv;
+}
+
+int fexecve(int fd, char *const argv[], char *const envp[])
+{
+    static int (*orig)
+	(int, char *const argv[], char *const envp[]) = NULL;
+    char **envp2;
+    int rv;
+
+    if(orig == NULL) {
+	orig = dlsym(RTLD_NEXT, "execve");
+	if(orig == NULL) return -1;
+    };
+debug("fexecve\n");
+    envp2 = addlib(envp);
+    rv = orig(fd, argv, envp2);
+    free(envp2);
+
+    return rv;
+}
+
+#define MKXSTAT(name, stat) \
 static int (*orig##name)(int, const char *, struct stat *) = NULL; \
 int name(int ver, const char *path, struct stat *buf) \
 { \
@@ -87,20 +196,21 @@ int name(int ver, const char *path, struct stat *buf) \
 	vidgid = grp->gr_gid; \
     } \
     rv = orig##name(ver, path, buf); \
-    if(rv != 0 && is_videodev(path)) { \
+    if(is_videodev(path)) { \
 	memset(buf, 0, sizeof *buf); \
 	buf->st_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP; \
 	buf->st_rdev = makedev(81, 10); \
 	buf->st_gid = vidgid; \
+	rv = 0; \
     } \
  \
-    return 0; \
+    return rv; \
 }
 
-MKSTAT(__xstat, stat)
-MKSTAT(__xstat64, stat64)
-MKSTAT(__lxstat, stat)
-MKSTAT(__lxstat64, stat64)
+MKXSTAT(__xstat, stat)
+MKXSTAT(__xstat64, stat64)
+MKXSTAT(__lxstat, stat)
+MKXSTAT(__lxstat64, stat64)
 
 #define MKFSTAT(name, stat) \
 static int (*orig##name)(int, int fd, struct stat *buf) = NULL; \
@@ -129,6 +239,7 @@ static int (*orig##name)(int, int, ...) = NULL; \
 int name(int fd, int cmd, ...) \
 { \
     va_list argp; \
+    char *p; \
     int rv; \
  \
     if(orig##name == NULL) { \
@@ -137,7 +248,8 @@ int name(int fd, int cmd, ...) \
     } \
     if(fd != fake_fd) { \
 	va_start(argp, cmd); \
-	rv = orig##name(fd, cmd, argp); \
+	p = va_arg(argp, char *); \
+	rv = orig##name(fd, cmd, p); \
 	va_end(argp); \
     } else { \
 	rv = 0; \
@@ -149,6 +261,7 @@ int name(int fd, int cmd, ...) \
 MKFCNTL(fcntl);
 MKFCNTL(fcntl64);
 MKFCNTL(__fcntl);
+MKFCNTL(__fcntl64);
  
 static inline int frame_process(
 	vid_context_t *vc,
@@ -234,6 +347,7 @@ static void get_camsize(vid_context_t *vc)
 	return ;
     }
     FD_ZERO(&rfds);
+debug("get_camsize\n");
     while(vc->vcap.maxwidth == 0) {
 	FD_SET(vc->vfd, &rfds);
 	rv = select(vc->vfd + 1, &rfds, NULL, NULL, NULL);
@@ -252,14 +366,17 @@ int name(const char *path, int flags, ...) \
 { \
     va_list argp; \
     static int libdv_inited = 0; \
+    char *p; \
     int rv; \
      \
     if(orig##name == NULL) { \
 	orig##name = dlsym(RTLD_NEXT, #name); \
 	if(orig##name == NULL) return -1; \
+	strip_environ(); \
     } \
+debug(#name " <%s>\n", path); \
     if(is_videodev(path)) { \
-printf("#1 dv4l open\n"); \
+debug("#1 dv4l open\n"); \
 	rv = orig##name("/dev/null", O_RDONLY); \
 	fake_fd = rv; \
 	if(!libdv_inited) { \
@@ -267,7 +384,7 @@ printf("#1 dv4l open\n"); \
 	    if(vctx.vraw == NULL) { \
 		return -1; \
 	    } \
-printf("#1 dv4l open libdv_init\n"); \
+debug("#1 dv4l open libdv_init\n"); \
 	    vctx.viec = iec61883_dv_fb_init(vctx.vraw, frame_recv, &vctx); \
 	    if(vctx.viec == NULL) return -1; \
 	    dv_init(0, 0); \
@@ -292,16 +409,18 @@ printf("#1 dv4l open libdv_init\n"); \
 	vctx.vcap.maxheight = 0; \
 	vctx.vwin.width = 320; \
 	vctx.vwin.height = 240; \
-printf("#2 dv4l open vfd %d\n", vctx.vfd); \
+debug("#2 dv4l open vfd %d\n", vctx.vfd); \
 	get_camsize(&vctx); \
-printf("#3 dv4l open\n"); \
+debug("#3 dv4l open\n"); \
 	if(iec61883_dv_fb_start(vctx.viec, 63) < 0) { \
+debug("#4 dv4l open\n"); \
 	    return -1; \
 	} \
-printf("#4 dv4l open\n"); \
+debug("#5 dv4l open\n"); \
     } else { \
 	va_start(argp, flags); \
-	rv = orig##name(path, flags, argp); \
+	p = va_arg(argp, char *); \
+	rv = orig##name(path, flags, p); \
 	va_end(argp); \
     } \
  \
@@ -347,6 +466,8 @@ int select(
 	    FD_SET(fake_fd, rd);
 	    FD_CLR(vctx.vfd, rd);
 	}
+    } else {
+	rv = orig(nfds, rd, wr, exc, tv);
     }
 
     return rv;
@@ -391,7 +512,7 @@ ssize_t write(int fd, const void *buf, size_t count)
     if(fd != fake_fd) {
 	return orig(fd, buf, count);
     }
-printf("dv4l write\n");
+debug("dv4l write\n");
 
     return count;
 }
@@ -425,8 +546,9 @@ int ioctl(int fd, int request, ...)
 	    va_end(argp);
 	    strncpy(vcap->name, "DV4Linux dv1394 to V4L", sizeof(vcap->name));
 	    vcap->channels = 1;
-	    vcap->type = VID_TYPE_CAPTURE | VIDEO_TYPE_CAMERA;
+	    vcap->type = VID_TYPE_CAPTURE;
             vcap->audios = 0;
+log("report max w %d h %d\n", vctx.vcap.maxwidth, vctx.vcap.maxheight);
             vcap->maxwidth = vctx.vcap.maxwidth;
             vcap->maxheight = vctx.vcap.maxheight;
             vcap->minwidth = 176;
@@ -437,14 +559,15 @@ int ioctl(int fd, int request, ...)
             vchan = va_arg(argp, struct video_channel *);
             va_end(argp);
             vchan->channel = 0;
-            strncpy(vchan->name, "dv1394", sizeof vchan->name);
+            strncpy(vchan->name, "DVCam", sizeof vchan->name);
             vchan->tuners = 0;
-            vchan->flags = VIDEO_TYPE_CAMERA;
+            vchan->type = VIDEO_TYPE_CAMERA;
+            vchan->flags = 0;
             vchan->norm = VIDEO_MODE_AUTO;
-printf("#2dv4l ioctl\n");
+debug("#2dv4l ioctl\n");
             return 0;
         case VIDIOCSCHAN:
-printf("#3dv4l ioctl\n");
+debug("#3dv4l ioctl\n");
 	    return 0;
         case VIDIOCGPICT:
             va_start(argp, request);
@@ -462,8 +585,14 @@ printf("#3dv4l ioctl\n");
             va_start(argp, request);
             vpic = va_arg(argp, struct video_picture *);
             va_end(argp);
-printf("#5dv4l ioctl\n");
-            return 0;
+debug("#5dv4l ioctl\n");
+	    if(vpic->palette == VIDEO_PALETTE_RGB24
+	    || vpic->palette == VIDEO_PALETTE_YUV420P) {
+		vctx.vpic.palette = vpic->palette;
+		return 0;
+	    } else {
+		return -1;
+	    }
         case VIDIOCGWIN:
             va_start(argp, request);
             vwin = va_arg(argp, struct video_window *);
@@ -479,14 +608,17 @@ printf("#5dv4l ioctl\n");
             va_start(argp, request);
             vwin = va_arg(argp, struct video_window *);
             va_end(argp);
+debug("#6dv4l ioctl set to w %d h %d\n", vwin->width, vwin->height);
 	    vctx.vwin.width = vwin->width;
 	    vctx.vwin.height = vwin->height;
             return 0;
+	case VIDIOCGMBUF:
+debug("VIDIOCGMBUF\n");
+	    return -1;
 	case VIDIOCGFBUF:
 	case VIDIOCGCAPTURE:
-	case VIDIOCGMBUF:
 	default:
-printf("#8dv4l ioctl\n");
+debug("#8dv4l ioctl\n");
 	    errno = EINVAL;
 	    return -1;
     }
@@ -503,20 +635,76 @@ int close(int fd)
 	if(orig == NULL) return -1;
     }
     if(fd == fake_fd) {
+log("close fake_fd");
+	iec61883_dv_fb_stop(vctx.viec);
 	fake_fd = -1;
     }
 
     return orig(fd);
 }
 
-typedef struct {
+typedef struct dx_s {
     DIR *dx_dir;
     enum { DxOther = 1, DxDev, DxDevFnd, DxDevEnd } dx_fnd;
     union {
 	struct dirent dirent;
 	struct dirent64 dirent64;
     } de;
+    struct dx_s *next;
 } dx_t;
+
+#define HASHSZ 13
+static dx_t *dxtab[HASHSZ];
+
+static void dxtab_init()
+{
+    int i;
+
+    for(i = 0; i < HASHSZ; ++i) dxtab[i] = NULL;
+}
+
+static dx_t **dxtab_find0(const DIR *dir)
+{
+    dx_t *p;
+    dx_t **pp;
+
+    for(pp = &dxtab[(unsigned long)dir % HASHSZ], p = *pp;
+	p != 0 && p->dx_dir != dir;
+	pp = &p->next, p = *pp) ;
+
+    return pp;
+}
+
+static dx_t *dxtab_find(const DIR *dir)
+{
+    dx_t **pp;
+
+    pp = dxtab_find0(dir);
+
+    return *pp;
+}
+
+static void dxtab_add(dx_t *d)
+{
+    dx_t **pp;
+
+    pp = dxtab_find0(d->dx_dir);
+    d->next = *pp;
+    *pp = d;
+}
+
+static void dxtab_rm(const DIR *dir)
+{
+    dx_t *p;
+    dx_t **pp;
+
+    pp = dxtab_find0(dir);
+    p = *pp;
+    if(p != NULL) {
+	*pp = p->next;
+	free(p);
+    }
+}
 
 DIR *opendir(const char *path)
 {
@@ -527,6 +715,8 @@ DIR *opendir(const char *path)
 
     if(orig == NULL) {
 	orig = dlsym(RTLD_NEXT, "opendir");
+	if(orig == NULL) return NULL;
+	dxtab_init();
     }
     dir = orig(path);
     if(dir == NULL) return dir;
@@ -536,13 +726,38 @@ DIR *opendir(const char *path)
     if(d == NULL) return NULL;
     d->dx_dir = dir;
     if((strcmp("/dev", resolved) == 0)
-    || (strcmp("/dev/", resolved) == 0)) {
+    || (strcmp("/dev/v4l", resolved) == 0)) {
 	d->dx_fnd = DxDev;
     } else {
 	d->dx_fnd = DxOther;
     }
+    dxtab_add(d);
 
-    return (DIR *)d;
+    return d->dx_dir;
+}
+
+DIR *fdopendir(int fd)
+{
+    static DIR *(*orig)(int) = NULL;
+    dx_t *d;
+    DIR *dir;
+
+debug("fdopendir");
+    if(orig == NULL) {
+	orig = dlsym(RTLD_NEXT, "fdopendir");
+	if(orig == NULL) return NULL;
+    }
+    dir = orig(fd);
+    if(dir == NULL) return NULL;
+
+    d = malloc(sizeof *d);
+    if(d == NULL) return NULL;
+
+    d->dx_dir = dir;
+    d->dx_fnd = DxOther;
+    dxtab_add(d);
+
+    return d->dx_dir;
 }
 
 #define MKREADDIR(name, dirent)  \
@@ -552,7 +767,8 @@ struct dirent *name(DIR *dir)  \
     struct dirent *de;  \
     dx_t *d;  \
   \
-    d = (dx_t *)dir;  \
+    d = dxtab_find(dir); \
+    if(d == NULL) return NULL; \
     if(d->dx_fnd == DxDevEnd) return NULL;  \
   \
     if(orig == NULL) {  \
@@ -564,7 +780,7 @@ struct dirent *name(DIR *dir)  \
     switch(d->dx_fnd) {  \
 	case DxDev:  \
 	    if(de != NULL) {  \
-		if(strcmp("video", de->d_name) == 0) {  \
+		if(strcmp("video0", de->d_name) == 0) {  \
 		    d->dx_fnd = DxDevFnd;  \
 		}  \
 	    } else {  \
@@ -585,6 +801,29 @@ struct dirent *name(DIR *dir)  \
 MKREADDIR(readdir, dirent)
 MKREADDIR(readdir64, dirent64)
  
+#define FUNARGS(...) , __VA_ARGS__
+#define MKDIRFUN(ret, reterr, name, argts, args) \
+ret name argts \
+{ \
+    static ret (*orig) argts = NULL; \
+    dx_t *d; \
+ \
+debug(#name "\n"); \
+    if(orig == NULL) { \
+	orig = dlsym(RTLD_NEXT, #name); \
+	if(orig == NULL) return reterr; \
+    } \
+    d = dxtab_find(dir); \
+    if(d == NULL) return reterr; \
+ \
+    return orig(d->dx_dir args); \
+} 
+
+MKDIRFUN(void, ,rewinddir, (DIR *dir), )
+MKDIRFUN(off_t, -1, telldir, (DIR *dir), )
+MKDIRFUN(void, , seekdir, (DIR *dir, off_t offset), FUNARGS(offset))
+MKDIRFUN(int, -1, dirfd, (DIR *dir), )
+ 
 int closedir(DIR *dir)
 {
     static int (*orig)(DIR *) = NULL;
@@ -595,9 +834,11 @@ int closedir(DIR *dir)
 	orig = dlsym(RTLD_NEXT, "closedir");
 	if(orig == NULL) return -1;
     }
-    d = (dx_t *)dir;
+    d = dxtab_find(dir); 
+    if(d == NULL) return -1; 
     rv = orig(d->dx_dir);
-    free(d);
+    dxtab_rm(dir);
 
     return rv;
 }
+

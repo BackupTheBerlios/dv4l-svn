@@ -1,0 +1,80 @@
+.TH DV4LSTART 1
+
+.SH NAME
+dv4lstart \- redirect V4L API to access a camcorder from a V4L program
+
+.SH SYNOPSIS
+.BI "dvlstart " command " [" argument " ...]"
+
+.SH DESCRIPTION
+.B dv4lstart
+enables programs using the video4linux API to access a dv1394
+(Firewire) camcorder. Using the LD_PRELOAD facility, it intercepts
+calls to the V4L API and makes the camcorder's videostream available
+to the application given by the
+.I command
+parameter.
+
+Check that LD_PRELOAD works in your environment by starting
+
+\ \ $ dv4lstart ls -l /dev/video0
+
+The resulting output should look like
+
+crw-rw---- 0 root video 81, 10 Jan  1  1970 /dev/video0
+
+Check your 1394 driver config by starting
+
+\ \ $ gst-launch-0.10 dv1394src \\! dvdemux \\! dvdec \\!  xvimagesink
+
+from your shell. After turning on your camera, a video window should
+appear. If this works, dv4lstart should work as well.
+
+.SH ENVIRONMENT
+.B dv4lstart
+passes all arguments to
+.I command .
+The behavior of
+.B dv4lstart
+can only be influenced using environment variables.
+.TP
+.BI DV4L_VERBOSE
+Set the amount of debugging messages. A level of 0 means no output at
+all, 1 is the default, 3 enables all messages.
+
+.SH EXAMPLES
+The command
+
+\ \ $ dv4lstart v4l-info
+
+outputs some information about the simulated V4L device.
+
+\ \ $ dv4lstart gqcam -v /dev/video0 -swap
+
+starts the
+.I gqcam
+webcam viewer, instructing it to swap the colors red and blue.
+
+.SH LIMITATIONS
+Programs like
+.I effectv,
+which only support V4L's
+.B mmap(2)
+feature do not work.
+Programs using exotic ways to access the V4L API will not
+work either.
+
+Some environments don't allow the use of LD_PRELOAD for security
+reasons.
+.B dv4lstart
+will not work there.
+
+If
+.B dv4lstart
+does not work, try 
+.I dv4l
+instead.
+
+.SH SEE ALSO
+dv4l(1)
+

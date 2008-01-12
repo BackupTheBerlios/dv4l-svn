@@ -1,3 +1,6 @@
+0.98
+- dv4lstart for camcorder access without vloopback
+
 0.97
 
 - 'size' option for programs where memory mapped IO does not work
