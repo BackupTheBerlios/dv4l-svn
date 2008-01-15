@@ -57,6 +57,7 @@ dv4l: $(OBJ)
 
 libdv4l.so: interdv4l.c scale.c palettes.c util.c $(INCS)
 	$(CC) -Wall -shared -fpic -Wl,-soname,$@ \
+	-D DV4LLIBNAME=/usr/local${exec_prefix}/lib/libdv4l.so \
 	-ldl -lraw1394 -liec61883 -ldv $< scale.c palettes.c util.c -o $@
 	
 dv4lstart:
@@ -69,7 +70,7 @@ tar:
 	rm -rf dv4l-$(VER)
 
 clean:
-	rm -f *.o core dv4l dv4lstart
+	rm -f *.o core dv4l dv4lstart libdv4l.so
 
 install: dv4l dv4lstart libdv4l.so
 	install -D -m 0750 -g video dv4l $(bindir)

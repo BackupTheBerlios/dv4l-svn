@@ -17,6 +17,7 @@
  * Author: Wolfgang Beck <bewo at users.berlios.de> 2007
  */
 
+#include <linux/videodev.h>
 
 /*
  * RGB to YUV420P conversion taken from
@@ -74,4 +75,14 @@ int rgb24toyuv420p(
     return ud - dst;
 }
 
-
+int get_depth(int palette)
+{
+    switch(palette) {
+	case VIDEO_PALETTE_RGB24:
+	    return 24;
+	case VIDEO_PALETTE_YUV420P:
+	    return 3;
+	default:
+	    return 3;
+    }
+}

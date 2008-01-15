@@ -42,5 +42,5 @@ static inline int palette_conv(
     }
 }
 
+int get_depth(int palette);
 #endif
-

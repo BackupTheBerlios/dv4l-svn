@@ -1,6 +1,7 @@
 #include <sys/types.h>
 #include <sys/select.h>
 #include <sys/time.h>
+#include <sys/mman.h>
 
 #include <stdio.h>
 #include <stdarg.h>
@@ -24,6 +25,7 @@
 #include <sys/stat.h>
 #include <linux/videodev.h>
 #include <dirent.h>
+#include "config.h"
 #include "scale.h"
 #include "palettes.h"
 #include "util.h"
@@ -33,9 +35,13 @@
 #define VIDEOV4LDEV "/dev/v4l/video0"
 static int fake_fd = -1;
 
+typedef enum { DvIdle = 1, DvRead, DvMmap } dv4l_run_t;
+
 typedef struct {
     int vfd;
     unsigned char *vrbuf;
+    unsigned char *vpmmap;
+    int vimgsz;
     raw1394handle_t vraw;
     iec61883_dv_fb_t viec;
     dv_decoder_t *vdvdec;
@@ -46,6 +52,8 @@ typedef struct {
     uint8_t *vframe[3];
     int vpitches[3];
     int vcomplete;
+    struct timeval vlastcomplete;
+    dv4l_run_t vstate;
 } vid_context_t;
 
 static vid_context_t vctx = { 0 };
@@ -72,11 +80,21 @@ static int is_videodev(const char *name)
     || (strcmp(VIDEOV4LDEV, resolved) == 0);
 }
 
+static inline unsigned long  timediff(
+    const struct timeval *a,
+    const struct timeval *b
+)
+{
+    return ((a->tv_sec * 1000) + (a->tv_usec / 1000))
+	 - ((b->tv_sec * 1000) + (b->tv_usec / 1000));
+}
+
 extern char **environ;
 
 #define PRELOAD "LD_PRELOAD="
 static void strip_environ()
 {
+#if 0
     char **cp;
     char **dp;
 
@@ -88,9 +106,12 @@ static void strip_environ()
     if(dp != NULL) {
 	memcpy(dp, dp + 1, (cp - dp) * sizeof cp);
     }
+#endif
 }
 
-#define LIBNAME "LD_PRELOAD=./libdv4l.so"
+#define XSTR(s) STR(s)
+#define STR(s) #s
+
 static char **addlib(char *const envp[])
 {
     char * const *cp;
@@ -102,7 +123,7 @@ static char **addlib(char *const envp[])
     envp2 = malloc((sz + 1) * sizeof *cp);
     if(envp2 == NULL) return NULL;
     memcpy(envp2, envp, sz * sizeof *cp);
-    envp2[sz] = LIBNAME;
+    envp2[sz] = "LD_PRELOAD=" XSTR(DV4LLIBNAME);
     envp2[sz + 1] = NULL;
     #if 0
     int i;
@@ -263,6 +284,58 @@ MKFCNTL(fcntl64);
 MKFCNTL(__fcntl);
 MKFCNTL(__fcntl64);
  
+#define MAXBUF 2
+#define MKMMAP(name) \
+void *name(void *start, size_t len, int prot, int flags, int fd, off_t off) \
+{ \
+    static void *(*orig)(void *, size_t, int, int, int, off_t) = NULL; \
+    void *rv; \
+    \
+    if(orig == NULL) { \
+	orig = dlsym(RTLD_NEXT, #name); \
+	if(orig == NULL) return NULL; \
+    } \
+    if(fd != fake_fd || (flags & MAP_ANONYMOUS)) { \
+	rv = orig(start, len, prot, flags, fd, off); \
+    } else if(fake_fd != -1) { \
+	vctx.vpmmap = malloc(MAXBUF * vctx.vimgsz); \
+	if(vctx.vpmmap == NULL) return NULL; \
+	rv = vctx.vpmmap; \
+    } else { \
+	err("invalid fd in " #name "\n"); \
+	rv = NULL; \
+    } \
+    log("rv 0x%lx\n", rv); \
+ \
+    return rv; \
+}
+
+MKMMAP(mmap);
+MKMMAP(mmap64);
+MKMMAP(__mmap64);
+
+int munmap(void *start, size_t length)
+{
+    static int (*orig)(void *, size_t) = NULL;
+    int rv;
+
+    if(orig == NULL) {
+	orig = dlsym(RTLD_NEXT, "munmap");
+	if(orig == NULL) return -1;
+    }
+    if(vctx.vstate == DvIdle) {
+	if(vctx.vpmmap != NULL) {
+	    free(vctx.vpmmap);
+	    vctx.vpmmap = NULL;
+	}
+	rv = 0;
+    } else {
+	rv = -1;
+    }
+
+    return rv;
+}
+
 static inline int frame_process(
 	vid_context_t *vc,
         const unsigned char *data
@@ -316,6 +389,8 @@ static int frame_recv(
     vid_context_t *vc;
     int w;
     int h;
+    struct timeval now;
+    unsigned long td;
 
     vc = (vid_context_t *)arg;
     if(complete) {
@@ -331,6 +406,9 @@ static int frame_recv(
 	}
 	frame_process(vc, data);
 	vc->vcomplete = 1;
+	gettimeofday(&now, NULL);
+	td = timediff(&now, &vc->vlastcomplete);
+	gettimeofday(&vc->vlastcomplete, NULL);
     } else {
 	vc->vcomplete = 0;
     }
@@ -358,6 +436,7 @@ debug("get_camsize\n");
 	}
     }
     iec61883_dv_fb_stop(vc->viec);
+    vc->vimgsz = vc->vcap.maxwidth * vc->vcap.maxheight * 3;
 }
 
 #define MKOPEN(name) \
@@ -374,8 +453,11 @@ int name(const char *path, int flags, ...) \
 	if(orig##name == NULL) return -1; \
 	strip_environ(); \
     } \
-debug(#name " <%s>\n", path); \
+log(#name " <%s>\n", path); \
     if(is_videodev(path)) { \
+	if(fake_fd != -1) { \
+	    return -1; \
+	} \
 debug("#1 dv4l open\n"); \
 	rv = orig##name("/dev/null", O_RDONLY); \
 	fake_fd = rv; \
@@ -399,24 +481,28 @@ debug("#1 dv4l open libdv_init\n"); \
 	    vctx.vpitches[1] = 0; \
 	    vctx.vpitches[2] = 0; \
 	    vctx.vpic.palette = VIDEO_PALETTE_RGB24; \
-	    vctx.vpic.depth = 24; \
+	    vctx.vpic.depth = get_depth(vctx.vpic.palette); \
 	    libdv_inited = 1; \
 	} \
 	vctx.vpitches[0] = 0; \
 	vctx.vfd = raw1394_get_fd(vctx.vraw); \
 	vctx.vrbuf = NULL; \
+	vctx.vpmmap = NULL; \
+	memset(&vctx.vlastcomplete, 0, sizeof vctx.vlastcomplete); \
 	vctx.vcap.maxwidth = 0; \
 	vctx.vcap.maxheight = 0; \
-	vctx.vwin.width = 320; \
-	vctx.vwin.height = 240; \
 debug("#2 dv4l open vfd %d\n", vctx.vfd); \
 	get_camsize(&vctx); \
+	vctx.vwin.width = vctx.vcap.maxwidth; \
+	vctx.vwin.height = vctx.vcap.maxheight; \
 debug("#3 dv4l open\n"); \
+	iec61883_dv_set_buffers(iec61883_dv_fb_get_dv(vctx.viec), 1000); \
 	if(iec61883_dv_fb_start(vctx.viec, 63) < 0) { \
 debug("#4 dv4l open\n"); \
 	    return -1; \
 	} \
 debug("#5 dv4l open\n"); \
+	vctx.vstate = DvRead; \
     } else { \
 	va_start(argp, flags); \
 	p = va_arg(argp, char *); \
@@ -494,7 +580,9 @@ ssize_t read(int fd, void *buf, size_t count)
 	vctx.vrbuf = buf;
 	if(select(vctx.vfd + 1, &rfds, NULL, NULL, NULL) > 0) {
 	    raw1394_loop_iterate(vctx.vraw);
-	    cnt -= vctx.vcomplete;
+	    if(vctx.vcomplete) {
+		--cnt;
+	    }
 	}
     }
 
@@ -525,8 +613,11 @@ int ioctl(int fd, int request, ...)
     struct video_channel *vchan;
     struct video_picture *vpic;
     struct video_window *vwin;
+    struct video_mbuf *vmbuf;
+    struct video_mmap *vmmap;
     char *p;
     int rv;
+    int frame;
 
     if(orig == NULL) {
 	orig = dlsym(RTLD_NEXT, "ioctl");
@@ -578,7 +669,7 @@ debug("#3dv4l ioctl\n");
             vpic->colour = 32768;
             vpic->contrast = 32768;
             vpic->whiteness = 32768;
-            vpic->depth = 3;
+            vpic->depth = get_depth(vctx.vpic.palette);
             vpic->palette = vctx.vpic.palette;
             return 0;
         case VIDIOCSPICT:
@@ -591,6 +682,7 @@ debug("#5dv4l ioctl\n");
 		vctx.vpic.palette = vpic->palette;
 		return 0;
 	    } else {
+log("VIDIOCSPICT unsupported palette\n");
 		return -1;
 	    }
         case VIDIOCGWIN:
@@ -614,12 +706,45 @@ debug("#6dv4l ioctl set to w %d h %d\n", vwin->width, vwin->height);
             return 0;
 	case VIDIOCGMBUF:
 debug("VIDIOCGMBUF\n");
-	    return -1;
-	case VIDIOCGFBUF:
+
+	    va_start(argp, request);
+	    vmbuf = va_arg(argp, struct video_mbuf *);
+	    va_end(argp);
+	    vmbuf->size = MAXBUF * vctx.vimgsz;
+	    vmbuf->frames = MAXBUF;
+	    vmbuf->offsets[0] = 0;
+	    vmbuf->offsets[1] = vctx.vimgsz;
+	    vctx.vstate = DvMmap;
+	    return 0;
+	case VIDIOCSYNC:
+	    va_start(argp, request);
+	    frame = *(va_arg(argp, int *));
+	    va_end(argp);
+	    read(fake_fd, vctx.vpmmap + vctx.vimgsz * frame, vctx.vimgsz);
+	    vctx.vstate = DvMmap;
+	    return 0;
+	case VIDIOCMCAPTURE:
+	    va_start(argp, request);
+	    vmmap = va_arg(argp, struct video_mmap *);
+	    va_end(argp);
+	    if(vctx.vpmmap != NULL) {
+		vctx.vwin.width = vmmap->width;
+		vctx.vwin.height = vmmap->height;
+		vctx.vpic.palette = vmmap->format;
+		read(fake_fd,
+			vctx.vpmmap + vctx.vimgsz * (vmmap->frame & 1),
+			vctx.vimgsz);
+		vctx.vstate = DvMmap;
+		rv = 0;
+	    } else {
+log("VIDIOCSYNC no mem mapped\n");
+		rv = -1;
+	    }
+	    return rv;
 	case VIDIOCGCAPTURE:
+	case VIDIOCGFBUF:
 	default:
-debug("#8dv4l ioctl\n");
-	    errno = EINVAL;
+log("unsupported ioctl %d\n", request);
 	    return -1;
     }
 
@@ -838,6 +963,14 @@ int closedir(DIR *dir)
     if(d == NULL) return -1; 
     rv = orig(d->dx_dir);
     dxtab_rm(dir);
+#if 0
+    if(vctx.vpmmap != NULL) {
+	free(vctx.vpmmap);
+log("set vpmmap to NULL\n");
+	vctx.vpmmap = NULL;
+    }
+#endif
+    vctx.vstate = DvIdle;
 
     return rv;
 }
