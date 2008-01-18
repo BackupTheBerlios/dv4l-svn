@@ -218,6 +218,7 @@ int name(int ver, const char *path, struct stat *buf) \
     } \
     rv = orig##name(ver, path, buf); \
     if(is_videodev(path)) { \
+debug(#name " is videodev <%s>\n", path); \
 	memset(buf, 0, sizeof *buf); \
 	buf->st_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP; \
 	buf->st_rdev = makedev(81, 10); \
@@ -305,7 +306,7 @@ void *name(void *start, size_t len, int prot, int flags, int fd, off_t off) \
 	err("invalid fd in " #name "\n"); \
 	rv = NULL; \
     } \
-    log("rv 0x%lx\n", rv); \
+    log(#name " rv 0x%lx\n", rv); \
  \
     return rv; \
 }
@@ -389,8 +390,6 @@ static int frame_recv(
     vid_context_t *vc;
     int w;
     int h;
-    struct timeval now;
-    unsigned long td;
 
     vc = (vid_context_t *)arg;
     if(complete) {
@@ -406,9 +405,6 @@ static int frame_recv(
 	}
 	frame_process(vc, data);
 	vc->vcomplete = 1;
-	gettimeofday(&now, NULL);
-	td = timediff(&now, &vc->vlastcomplete);
-	gettimeofday(&vc->vlastcomplete, NULL);
     } else {
 	vc->vcomplete = 0;
     }
@@ -456,7 +452,7 @@ int name(const char *path, int flags, ...) \
 log(#name " <%s>\n", path); \
     if(is_videodev(path)) { \
 	if(fake_fd != -1) { \
-	    return -1; \
+	    return fake_fd; \
 	} \
 debug("#1 dv4l open\n"); \
 	rv = orig##name("/dev/null", O_RDONLY); \
@@ -484,11 +480,12 @@ debug("#1 dv4l open libdv_init\n"); \
 	    vctx.vpic.depth = get_depth(vctx.vpic.palette); \
 	    libdv_inited = 1; \
 	} \
+	vctx.vstate = DvRead; \
 	vctx.vpitches[0] = 0; \
 	vctx.vfd = raw1394_get_fd(vctx.vraw); \
 	vctx.vrbuf = NULL; \
 	vctx.vpmmap = NULL; \
-	memset(&vctx.vlastcomplete, 0, sizeof vctx.vlastcomplete); \
+	gettimeofday(&vctx.vlastcomplete, NULL); \
 	vctx.vcap.maxwidth = 0; \
 	vctx.vcap.maxheight = 0; \
 debug("#2 dv4l open vfd %d\n", vctx.vfd); \
@@ -502,12 +499,12 @@ debug("#4 dv4l open\n"); \
 	    return -1; \
 	} \
 debug("#5 dv4l open\n"); \
-	vctx.vstate = DvRead; \
     } else { \
 	va_start(argp, flags); \
 	p = va_arg(argp, char *); \
 	rv = orig##name(path, flags, p); \
 	va_end(argp); \
+debug("#5 dv4l open rv %d err <%s>\n", rv, strerror(errno)); \
     } \
  \
     return rv; \
@@ -564,6 +561,9 @@ ssize_t read(int fd, void *buf, size_t count)
     static ssize_t (*orig)(int, void *, size_t) = NULL;
     fd_set rfds;
     int cnt;
+    struct timeval readstart;
+    struct timeval selstart;
+    unsigned long td;
 
     if(orig == NULL) {
 	orig = dlsym(RTLD_NEXT, "read");
@@ -573,18 +573,24 @@ ssize_t read(int fd, void *buf, size_t count)
 	cnt = orig(fd, buf, count);
 	return cnt;
     }
-    cnt = 1;
+    gettimeofday(&readstart, NULL);
+    td = timediff(&readstart, &vctx.vlastcomplete);
+
     FD_ZERO(&rfds);
-    while(cnt > 0) {
+    while(1) {
 	FD_SET(vctx.vfd, &rfds);
 	vctx.vrbuf = buf;
+	gettimeofday(&selstart, NULL);
 	if(select(vctx.vfd + 1, &rfds, NULL, NULL, NULL) > 0) {
 	    raw1394_loop_iterate(vctx.vraw);
 	    if(vctx.vcomplete) {
-		--cnt;
+		gettimeofday(&vctx.vlastcomplete, NULL);
+		td += timediff(&vctx.vlastcomplete, &selstart);
+		if(vctx.vstate == DvRead || td > 20) return count;
 	    }
 	}
     }
+printf("td %ld\n",td);
 
     return count;
 }
@@ -731,9 +737,11 @@ debug("VIDIOCGMBUF\n");
 		vctx.vwin.width = vmmap->width;
 		vctx.vwin.height = vmmap->height;
 		vctx.vpic.palette = vmmap->format;
+#if 0
 		read(fake_fd,
 			vctx.vpmmap + vctx.vimgsz * (vmmap->frame & 1),
 			vctx.vimgsz);
+#endif
 		vctx.vstate = DvMmap;
 		rv = 0;
 	    } else {
