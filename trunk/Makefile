@@ -15,7 +15,7 @@
 #
 # Author: Wolfgang Beck <bewo at users.berlios.de> 2007
 
-VER := 0.98
+VER := 0.99
 CFLAGS := -Wall -O3 -MMD 
 LDFLAGS := -lraw1394 -liec61883 -ldv
 
@@ -50,7 +50,7 @@ $(INCS)
 
 OBJ := $(SRC:.c=.o)
 
-all: dv4l libdv4l.so
+all: dv4l libdv4l.so dv4lstart
 
 dv4l: $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ)
@@ -61,7 +61,7 @@ libdv4l.so: interdv4l.c scale.c palettes.c util.c $(INCS)
 	-ldl -lraw1394 -liec61883 -ldv $< scale.c palettes.c util.c -o $@
 	
 dv4lstart:
-	./mkdv4lstart /usr/local${exec_prefix}/lib
+	./mkdv4lstart /usr/local${exec_prefix}/lib $(VER)
 
 tar:
 	mkdir dv4l-$(VER)

@@ -136,7 +136,7 @@ static char **addlib(char *const envp[])
 char *getenv(const char *name)
 {
     static char *(*orig)(const char *name) = NULL;
-    const char *deb;
+    const char *dv4l_env;
     char *err;
     int lvl;
 
@@ -144,13 +144,17 @@ char *getenv(const char *name)
 	orig = dlsym(RTLD_NEXT, "getenv");
 	if(orig == NULL) return NULL;
 	strip_environ();
-	deb = getenv("DV4L_VERBOSE");
-	if(deb != NULL) {
-	    lvl = strtol(deb, &err, 0);
-	    if(*deb != '\0' && *err == '\0') {
+	dv4l_env = getenv("DV4L_VERBOSE");
+	if(dv4l_env != NULL) {
+	    lvl = strtol(dv4l_env, &err, 0);
+	    if(*dv4l_env != '\0' && *err == '\0') {
 		set_tracelevel(lvl);
 		log("set tracelevel to %d\n", lvl);
 	    }
+	}
+	dv4l_env = getenv("DV4L_COLORCORR");
+	if(dv4l_env != NULL) {
+	    set_color_correction(1);
 	}
     }
 

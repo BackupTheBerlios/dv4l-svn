@@ -4,6 +4,43 @@ cat > dv4lstart << EOF
 # export LD_DEBUG=bindings
 # export DV4L_VERBOSE=3
 export LD_PRELOAD="$1/libdv4l.so" 
-\$*
+export LD_PRELOAD
+
+usage () {
+    echo "Usage: dv4lstart [-c] [-v <level>] command [command options]"
+    echo
+    echo "Version " $2
+    echo
+    echo "    -c, --color-correction"
+    echo "        Set this option if red objects look blue."
+    echo
+    echo "    -v, --verbose <level>"
+    echo "        Set the amount of debugging messages. A level of 0 means no"
+    echo "        output at all, 1 is the default, 3 enables all messages."
+}
+
+
+while [ "\$#" -gt "0" ]
+do
+    case \$1 in
+    -c | --color-correction)
+        DV4L_COLORCORR=1
+        export DV4L_COLORCORR
+        ;;
+    -v | --verbose)
+        shift
+        DV4L_VERBOSE=\$1
+        export DV4L_VERBOSE
+        ;;
+    -h | --help)
+	usage
+	exit -1
+	;;
+    *)
+        exec \$*
+        ;;
+    esac
+    shift
+done
 EOF
 chmod 755 dv4lstart
