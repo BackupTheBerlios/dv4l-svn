@@ -94,7 +94,7 @@ extern char **environ;
 #define PRELOAD "LD_PRELOAD="
 static void strip_environ()
 {
-#if 0
+#if 1
     char **cp;
     char **dp;
 
@@ -249,6 +249,7 @@ int name(int ver, int fd, struct stat *buf) \
     memset(buf, 0, sizeof *buf); \
     buf->st_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP; \
     buf->st_rdev = makedev(81, 10); \
+debug(#name " videodev\n"); \
  \
     return 0; \
 }
@@ -274,6 +275,7 @@ int name(int fd, int cmd, ...) \
 	rv = orig##name(fd, cmd, p); \
 	va_end(argp); \
     } else { \
+debug(#name " %d videodev\n", cmd); \
 	rv = 0; \
     } \
  \
@@ -296,22 +298,23 @@ void *name(void *start, size_t len, int prot, int flags, int fd, off_t off) \
 	orig = dlsym(RTLD_NEXT, #name); \
 	if(orig == NULL) return NULL; \
     } \
-    if(fd != fake_fd || (flags & MAP_ANONYMOUS)) { \
+    if((fake_fd != fd) || (fake_fd == -1) || (flags & MAP_ANONYMOUS)) { \
 	rv = orig(start, len, prot, flags, fd, off); \
     } else if(fake_fd != -1) { \
 	vctx.vpmmap = malloc(MAXBUF * vctx.vimgsz); \
-	if(vctx.vpmmap == NULL) return NULL; \
+	if(vctx.vpmmap == NULL) return MAP_FAILED; \
 	rv = vctx.vpmmap; \
     } else { \
 	err("invalid fd in " #name "\n"); \
-	rv = NULL; \
+	rv = MAP_FAILED; \
     } \
-    log(#name " rv 0x%lx\n", rv); \
+    log(#name " fd %d rv 0x%lx\n", fd, rv); \
  \
     return rv; \
 }
 
 MKMMAP(mmap);
+MKMMAP(mmap2);
 MKMMAP(mmap64);
 MKMMAP(__mmap64);
 
@@ -324,15 +327,19 @@ int munmap(void *start, size_t length)
 	orig = dlsym(RTLD_NEXT, "munmap");
 	if(orig == NULL) return -1;
     }
-    if(vctx.vstate == DvIdle) {
-	if(vctx.vpmmap != NULL) {
-	    free(vctx.vpmmap);
-	    vctx.vpmmap = NULL;
+debug("munmap 0x%lx\n", start);
+    if(vctx.vpmmap != start) {
+	rv = orig(start, length);
+    } else {
+	if(vctx.vstate == DvIdle) {
+	    if(vctx.vpmmap != NULL) {
+		free(vctx.vpmmap);
+		vctx.vpmmap = NULL;
+	    }
 	}
 	rv = 0;
-    } else {
-	rv = -1;
     }
+debug("#3munmap rv %d\n", rv);
 
     return rv;
 }
@@ -433,6 +440,7 @@ debug("get_camsize\n");
     }
     iec61883_dv_fb_stop(vc->viec);
     vc->vimgsz = vc->vcap.maxwidth * vc->vcap.maxheight * 3;
+debug("vimgsz %d\n", vc->vimgsz);
 }
 
 #define MKOPEN(name) \
@@ -441,7 +449,7 @@ int name(const char *path, int flags, ...) \
 { \
     va_list argp; \
     static int libdv_inited = 0; \
-    char *p; \
+    mode_t mode; \
     int rv; \
      \
     if(orig##name == NULL) { \
@@ -452,6 +460,7 @@ int name(const char *path, int flags, ...) \
 log(#name " <%s>\n", path); \
     if(is_videodev(path)) { \
 	if(fake_fd != -1) { \
+debug(#name " videodev fake_fd already init'd\n"); \
 	    return fake_fd; \
 	} \
 debug("#1 dv4l open\n"); \
@@ -488,7 +497,7 @@ debug("#1 dv4l open libdv_init\n"); \
 	gettimeofday(&vctx.vlastcomplete, NULL); \
 	vctx.vcap.maxwidth = 0; \
 	vctx.vcap.maxheight = 0; \
-debug("#2 dv4l open vfd %d\n", vctx.vfd); \
+debug("#2 dv4l open vfd %d fake_fd %d\n", vctx.vfd, fake_fd); \
 	get_camsize(&vctx); \
 	vctx.vwin.width = vctx.vcap.maxwidth; \
 	vctx.vwin.height = vctx.vcap.maxheight; \
@@ -500,10 +509,14 @@ debug("#4 dv4l open\n"); \
 	} \
 debug("#5 dv4l open\n"); \
     } else { \
-	va_start(argp, flags); \
-	p = va_arg(argp, char *); \
-	rv = orig##name(path, flags, p); \
-	va_end(argp); \
+	if(flags & O_CREAT) { \
+	    va_start(argp, flags); \
+	    mode = va_arg(argp, mode_t); \
+	    rv = orig##name(path, flags, mode); \
+	    va_end(argp); \
+	} else { \
+	    rv = orig##name(path, flags); \
+	} \
 debug("#5 dv4l open rv %d err <%s>\n", rv, strerror(errno)); \
     } \
  \
@@ -573,6 +586,9 @@ ssize_t read(int fd, void *buf, size_t count)
 	cnt = orig(fd, buf, count);
 	return cnt;
     }
+    /*
+     * get time that has elapsed since last complete frame
+     */
     gettimeofday(&readstart, NULL);
     td = timediff(&readstart, &vctx.vlastcomplete);
 
@@ -584,6 +600,11 @@ ssize_t read(int fd, void *buf, size_t count)
 	if(select(vctx.vfd + 1, &rfds, NULL, NULL, NULL) > 0) {
 	    raw1394_loop_iterate(vctx.vraw);
 	    if(vctx.vcomplete) {
+		/*
+		 * check if we had skipped enough frames to
+		 * only get the latest frame; this avoids jittery
+		 * display
+		 */
 		gettimeofday(&vctx.vlastcomplete, NULL);
 		td += timediff(&vctx.vlastcomplete, &selstart);
 		if(vctx.vstate == DvRead || td > 20) return count;
@@ -636,6 +657,7 @@ int ioctl(int fd, int request, ...)
 	va_end(argp);
 	return rv;
     }
+debug("ioctl videodev fd %d req %d\n", fd, request);
     switch(request) {
 	case VIDIOCGCAP:
 	    va_start(argp, request);
@@ -737,11 +759,6 @@ debug("VIDIOCGMBUF\n");
 		vctx.vwin.width = vmmap->width;
 		vctx.vwin.height = vmmap->height;
 		vctx.vpic.palette = vmmap->format;
-#if 0
-		read(fake_fd,
-			vctx.vpmmap + vctx.vimgsz * (vmmap->frame & 1),
-			vctx.vimgsz);
-#endif
 		vctx.vstate = DvMmap;
 		rv = 0;
 	    } else {
@@ -753,6 +770,7 @@ log("VIDIOCSYNC no mem mapped\n");
 	case VIDIOCGFBUF:
 	default:
 log("unsupported ioctl %d\n", request);
+	    errno = EINVAL;
 	    return -1;
     }
 
@@ -770,6 +788,7 @@ int close(int fd)
     if(fd == fake_fd) {
 log("close fake_fd");
 	iec61883_dv_fb_stop(vctx.viec);
+	vctx.vstate = DvIdle;
 	fake_fd = -1;
     }
 
@@ -978,7 +997,6 @@ log("set vpmmap to NULL\n");
 	vctx.vpmmap = NULL;
     }
 #endif
-    vctx.vstate = DvIdle;
 
     return rv;
 }
