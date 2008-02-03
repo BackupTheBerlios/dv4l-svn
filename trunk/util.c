@@ -17,8 +17,13 @@
  * Author: Wolfgang Beck <bewo at users.berlios.de> 2007
  */
 
+#include <sys/ioctl.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <stdarg.h>
+#include <string.h>
+#include <fcntl.h>
+#include <linux/videodev.h>
 #include "util.h"
 
 static int tracelevel = 1;

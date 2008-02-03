@@ -44,6 +44,7 @@
 #include <linux/videodev.h>
 #include <dirent.h>
 #include "config.h"
+#include "normfile.h"
 #include "scale.h"
 #include "palettes.h"
 #include "util.h"
@@ -53,10 +54,14 @@
 #define VIDEOV4LDEV "/dev/v4l/video0"
 static int fake_fd = -1;
 
+
 typedef enum { DvIdle = 1, DvRead, DvMmap } dv4l_run_t;
 
 typedef struct {
     int vfd;
+    char vdevname[PATH_MAX];
+    char vdevalt[PATH_MAX];
+    char vdevbase[PATH_MAX];
     unsigned char *vrbuf;
     unsigned char *vpmmap;
     int vimgsz;
@@ -72,9 +77,174 @@ typedef struct {
     int vcomplete;
     struct timeval vlastcomplete;
     dv4l_run_t vstate;
+    int vnoredir;
+    int vminor;
+    int vrgbonly;
 } vid_context_t;
 
 static vid_context_t vctx = { 0 };
+
+static int is_videodev(const char *name);
+
+#define MKSTAT_COMMON(name, stat) \
+int common_##name(gid_t vidgid, const char *path, struct stat *buf) \
+{ \
+    char resolved[PATH_MAX]; \
+    int rv; \
+ \
+debug("#1" #name " <%s>\n", path); \
+    rv = -1; \
+    if(vctx.vnoredir == 0) { \
+	if(is_videodev(path)) { \
+debug(#name " is videodev <%s>\n", path); \
+	    memset(buf, 0, sizeof *buf); \
+	    buf->st_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP; \
+	    buf->st_rdev = makedev(81, vctx.vminor); \
+	    buf->st_gid = vidgid; \
+	    buf->st_blksize = 4096; \
+	    buf->st_nlink = 1; \
+	    rv = 0; \
+	} else { \
+	    normalize(path, resolved); \
+debug("#2" #name " <%s>\n", resolved); \
+	    if(strcmp("/dev/v4l", resolved) == 0) { \
+debug("#3" #name " <%s>\n", resolved); \
+		memset(buf, 0, sizeof *buf); \
+		buf->st_mode = S_IFDIR | S_IRUSR | S_IWUSR | S_IXUSR \
+				| S_IRGRP | S_IWGRP | S_IXGRP; \
+		buf->st_gid = vidgid; \
+		rv = 0; \
+	    } \
+	} \
+    } \
+ \
+    return rv; \
+}
+
+MKSTAT_COMMON(lstat, stat)
+MKSTAT_COMMON(lstat64, stat64)
+MKSTAT_COMMON(__xstat, stat)
+MKSTAT_COMMON(__xstat64, stat64)
+MKSTAT_COMMON(__lxstat, stat)
+MKSTAT_COMMON(__lxstat64, stat64)
+
+#define MKXSTAT(name, stat) \
+static int (*orig##name)(int, const char *, struct stat *) = NULL; \
+int name(int ver, const char *path, struct stat *buf) \
+{ \
+    int rv; \
+    static gid_t vidgid; \
+    struct group *grp; \
+ \
+    if(orig##name == NULL) { \
+	orig##name = dlsym(RTLD_NEXT, #name); \
+	if(orig##name == NULL) return -1; \
+	grp = getgrnam(VIDEOGROUP); \
+	if(grp == NULL) { \
+	    return -1; \
+	} \
+	vidgid = grp->gr_gid; \
+    } \
+    rv = orig##name(ver, path, buf); \
+    if(rv == -1) { \
+	rv = common_##name(vidgid, path, buf); \
+    } \
+debug(#name " path <%s> noredir %d rv %d\n", path, vctx.vnoredir, rv); \
+ \
+    return rv; \
+}
+
+MKXSTAT(__xstat, stat)
+MKXSTAT(__xstat64, stat64)
+MKXSTAT(__lxstat, stat)
+MKXSTAT(__lxstat64, stat64)
+
+#define MKSTAT(name, stat) \
+static int (*orig##name)(const char *, struct stat *) = NULL; \
+int name(const char *path, struct stat *buf) \
+{ \
+    int rv; \
+    static gid_t vidgid; \
+    struct group *grp; \
+ \
+    if(orig##name == NULL) { \
+	orig##name = dlsym(RTLD_NEXT, #name); \
+	if(orig##name == NULL) return -1; \
+	grp = getgrnam(VIDEOGROUP); \
+	if(grp == NULL) { \
+	    return -1; \
+	} \
+	vidgid = grp->gr_gid; \
+    } \
+    rv = orig##name(path, buf); \
+    if(rv == -1) { \
+	rv = common_##name(vidgid, path, buf); \
+    } \
+debug(#name " path <%s> noredir %d rv %d\n", path, vctx.vnoredir, rv); \
+ \
+    return rv; \
+}
+
+MKSTAT(lstat, stat)
+MKSTAT(lstat64, stat64)
+
+int access(const char *path, int mode)
+{
+    int (*orig)(const char *, int) = NULL;
+    int rv;
+
+    if(orig == NULL) {
+	orig = dlsym(RTLD_NEXT, "access");
+	if(orig == NULL) return -1;
+    }
+    rv = orig(path, mode);
+    if(rv == -1) {
+	if(is_videodev(path)) {
+log("access <%s>\n", path);
+	    rv = 0;
+	}
+    }
+
+    return rv;
+}
+
+static int scan_dev(char *devname, const char *devtmpl)
+{
+    struct stat statb;
+    int i;
+
+    for(i = 0; i < 10; ++i) {
+	sprintf(devname, devtmpl, i);
+	if(stat(devname, &statb) < 0) {
+	    debug("stat <%s> ok\n", devname);
+	    return i;
+	}
+    }
+
+    return -1;
+}
+
+static void init_vctx()
+{
+    int m;
+
+    vctx.vnoredir = 1;
+    m = scan_dev(vctx.vdevname, "/dev/video%d");
+    if(m < 0) {
+	m = scan_dev(vctx.vdevname, "/dev/v4l/video%d");
+	if(m < 0) {
+	    strcpy(vctx.vdevname, VIDEODEV);
+	    m = 0;
+	} else {
+	    sprintf(vctx.vdevalt, "/dev/video%d", m);
+	}
+    } else {
+	sprintf(vctx.vdevalt, "/dev/v4l/video%d", m);
+    }
+    vctx.vminor = m;
+    sprintf(vctx.vdevbase, "video%d", m);
+    vctx.vnoredir = 0;
+}
 
 static int is_videodev(const char *name)
 {
@@ -84,18 +254,24 @@ static int is_videodev(const char *name)
     char *d;
     const char *bname;
 
+    if(vctx.vdevname[0] == '\0') {
+	init_vctx();
+    }
     strcpy(dir, name);
     bname = basename(dir);
 
     dname = dirname(dir);
-    if(realpath(dname, resolved) == NULL) return 0;
+    if(normalize(dname, resolved) == NULL) return 0;
     d = resolved + strlen(resolved);
     *d = '/';
     ++d;
     strcpy(d, bname);
 
-    return (strcmp(VIDEODEV, resolved) == 0)
-    || (strcmp(VIDEOV4LDEV, resolved) == 0);
+    debug("is_videovdev devname <%s> devalt <%s> resolved <%s>\n", 
+	    vctx.vdevname, vctx.vdevalt, resolved);
+
+    return (strcmp(vctx.vdevname, resolved) == 0)
+    || (strcmp(vctx.vdevalt, resolved) == 0);
 }
 
 static inline unsigned long  timediff(
@@ -109,10 +285,11 @@ static inline unsigned long  timediff(
 
 extern char **environ;
 
+#undef HIDE_PRELOAD
 #define PRELOAD "LD_PRELOAD="
 static void strip_environ()
 {
-#if 1
+#ifdef HIDE_PRELOAD
     char **cp;
     char **dp;
 
@@ -161,7 +338,6 @@ char *getenv(const char *name)
     if(orig == NULL) {
 	orig = dlsym(RTLD_NEXT, "getenv");
 	if(orig == NULL) return NULL;
-	strip_environ();
 	dv4l_env = getenv("DV4L_VERBOSE");
 	if(dv4l_env != NULL) {
 	    lvl = strtol(dv4l_env, &err, 0);
@@ -171,9 +347,10 @@ char *getenv(const char *name)
 	    }
 	}
 	dv4l_env = getenv("DV4L_COLORCORR");
-	if(dv4l_env != NULL) {
-	    set_color_correction(1);
-	}
+	set_color_correction(dv4l_env != NULL);
+
+	dv4l_env = getenv("DV4L_RGBONLY");
+	vctx.vrgbonly = (dv4l_env != NULL);
     }
 
     if(strcmp(name, "LD_PRELOAD") == 0) {
@@ -221,40 +398,28 @@ debug("fexecve\n");
     return rv;
 }
 
-#define MKXSTAT(name, stat) \
-static int (*orig##name)(int, const char *, struct stat *) = NULL; \
-int name(int ver, const char *path, struct stat *buf) \
-{ \
-    int rv; \
-    static gid_t vidgid; \
-    struct group *grp; \
- \
-    if(orig##name == NULL) { \
-	orig##name = dlsym(RTLD_NEXT, #name); \
-	if(orig##name == NULL) return -1; \
-	grp = getgrnam(VIDEOGROUP); \
-	if(grp == NULL) { \
-	    return -1; \
-	} \
-	vidgid = grp->gr_gid; \
-    } \
-    rv = orig##name(ver, path, buf); \
-    if(is_videodev(path)) { \
-debug(#name " is videodev <%s>\n", path); \
-	memset(buf, 0, sizeof *buf); \
-	buf->st_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP; \
-	buf->st_rdev = makedev(81, 10); \
-	buf->st_gid = vidgid; \
-	rv = 0; \
-    } \
- \
-    return rv; \
-}
+#ifdef HIDE_PRELOAD
+pid_t fork()
+{
+    static pid_t (*orig)() = NULL;
+    pid_t rv;
+    char **env0;
+    char **env1;
 
-MKXSTAT(__xstat, stat)
-MKXSTAT(__xstat64, stat64)
-MKXSTAT(__lxstat, stat)
-MKXSTAT(__lxstat64, stat64)
+    if(orig == NULL) {
+	orig = dlsym(RTLD_NEXT, "fork");
+	if(orig == NULL) return -1;
+    }
+    env0 = environ;
+    env1 = addlib(env0);
+    environ = env1;
+
+    rv = orig();
+    environ = env0;
+
+    return rv;
+}
+#endif
 
 #define MKFSTAT(name, stat) \
 static int (*orig##name)(int, int fd, struct stat *buf) = NULL; \
@@ -728,7 +893,9 @@ debug("#3dv4l ioctl\n");
             va_end(argp);
 debug("#5dv4l ioctl\n");
 	    if(vpic->palette == VIDEO_PALETTE_RGB24
-	    || vpic->palette == VIDEO_PALETTE_YUV420P) {
+	    || (vpic->palette == VIDEO_PALETTE_YUV420P
+		&& vctx.vrgbonly == 0)) {
+log("set palette %d\n", vpic->palette);
 		vctx.vpic.palette = vpic->palette;
 		return 0;
 	    } else {
@@ -778,11 +945,18 @@ debug("VIDIOCGMBUF\n");
 	    vmmap = va_arg(argp, struct video_mmap *);
 	    va_end(argp);
 	    if(vctx.vpmmap != NULL) {
-		vctx.vwin.width = vmmap->width;
-		vctx.vwin.height = vmmap->height;
-		vctx.vpic.palette = vmmap->format;
-		vctx.vstate = DvMmap;
-		rv = 0;
+		if(vmmap->format == VIDEO_PALETTE_RGB24
+		|| (vmmap->format == VIDEO_PALETTE_YUV420P
+		    && vctx.vrgbonly == 0)) {
+		    vctx.vpic.palette = vmmap->format;
+		    vctx.vwin.width = vmmap->width;
+		    vctx.vwin.height = vmmap->height;
+		    vctx.vstate = DvMmap;
+		    rv = 0;
+		} else {
+log("unsupported/disabled palette %d\n", vmmap->format);
+		    rv = -1;
+		}
 	    } else {
 log("VIDIOCSYNC no mem mapped\n");
 		rv = -1;
@@ -806,6 +980,7 @@ int close(int fd)
     if(orig == NULL) {
 	orig = dlsym(RTLD_NEXT, "close");
 	if(orig == NULL) return -1;
+	strip_environ();
     }
     if(fd == fake_fd) {
 log("close fake_fd");
@@ -819,7 +994,7 @@ log("close fake_fd");
 
 typedef struct dx_s {
     DIR *dx_dir;
-    enum { DxOther = 1, DxDev, DxDevFnd, DxDevEnd } dx_fnd;
+    enum { DxOther = 1, DxDev, DxDevFnd, DxDevEnd, DxMkDir } dx_fnd;
     union {
 	struct dirent dirent;
 	struct dirent64 dirent64;
@@ -891,14 +1066,33 @@ DIR *opendir(const char *path)
 	orig = dlsym(RTLD_NEXT, "opendir");
 	if(orig == NULL) return NULL;
 	dxtab_init();
+	if(vctx.vdevname[0] == '\0') {
+	    init_vctx();
+	}
     }
     dir = orig(path);
-    if(dir == NULL) return dir;
+    normalize(path, resolved);
+    if(dir == NULL) {
+	if(strcmp("/dev/v4l", resolved) == 0) {
+	    /*
+	     * simulate non-existing /dev/v4l directory
+	     */
+	    d = malloc(sizeof *d);
+	    if(d == NULL) return NULL;
+	    memset(d, 0, sizeof *d);
+	    d->dx_dir = orig("/");;
+	    d->dx_fnd = DxMkDir;
+	    dxtab_add(d);
+	    return d->dx_dir;
+	} else {
+	    return dir;
+	}
+    }
 
-    if(realpath(path, resolved) == NULL) return NULL;
     d = malloc(sizeof *d);
     if(d == NULL) return NULL;
     d->dx_dir = dir;
+    log("opendir <%s>\n", resolved);
     if((strcmp("/dev", resolved) == 0)
     || (strcmp("/dev/v4l", resolved) == 0)) {
 	d->dx_fnd = DxDev;
@@ -934,6 +1128,33 @@ debug("fdopendir");
     return d->dx_dir;
 }
 
+#define MKCOMMON_RDIR(name, dirent) \
+struct dirent *common_##name(dx_t *d, struct dirent *de) \
+{ \
+    switch(d->dx_fnd) {  \
+	case DxDev:  \
+	    if(de == NULL) { \
+log("#3common_" #name "\n"); \
+		memset(&d->de, 0, sizeof(struct dirent64));  \
+		d->de.dirent.d_type = DT_CHR;  \
+		strcpy(d->de.dirent.d_name, vctx.vdevbase);  \
+		err("inserting <%s>\n", vctx.vdevbase); \
+		de = &d->de.dirent;  \
+		d->dx_fnd = DxDevEnd;  \
+	    }; \
+	    return de;  \
+	case DxDevFnd:  \
+	case DxOther:  \
+	default:  \
+	    return de;  \
+    }  \
+}
+
+MKCOMMON_RDIR(readdir, dirent)
+MKCOMMON_RDIR(readdir64, dirent64)
+MKCOMMON_RDIR(readdir_r, dirent)
+MKCOMMON_RDIR(readdir64_r, dirent64)
+
 #define MKREADDIR(name, dirent)  \
 struct dirent *name(DIR *dir)  \
 {  \
@@ -950,31 +1171,68 @@ struct dirent *name(DIR *dir)  \
 	if(orig == NULL) return NULL;  \
     }  \
   \
-    de = orig(d->dx_dir);  \
-    switch(d->dx_fnd) {  \
-	case DxDev:  \
-	    if(de != NULL) {  \
-		if(strcmp("video0", de->d_name) == 0) {  \
-		    d->dx_fnd = DxDevFnd;  \
-		}  \
-	    } else {  \
-		memset(&d->de, 0, sizeof(struct dirent64));  \
-		d->de.dirent.d_type = DT_CHR;  \
-		strcpy(d->de.dirent.d_name, "video");  \
-		de = &d->de.dirent;  \
-		d->dx_fnd = DxDevEnd;  \
-	    }  \
-	    return de;  \
-	case DxDevFnd:  \
-	case DxOther:  \
-	default:  \
-	    return de;  \
-    }  \
+log("#1" #name "\n"); \
+    if(d->dx_fnd != DxMkDir) { \
+	de = orig(d->dx_dir);  \
+    } else { \
+log("#2" #name "\n"); \
+	de = NULL; \
+	d->dx_fnd = DxDev; \
+    } \
+ \
+    return common_##name(d, de); \
 } 
 
 MKREADDIR(readdir, dirent)
 MKREADDIR(readdir64, dirent64)
  
+#define MKREADDIR_R(name, dirent) \
+int name(DIR *dir, struct dirent *entry, \
+struct dirent **result) \
+{ \
+    static int (*orig)(DIR *, struct dirent *, \
+	    struct dirent **) = NULL; \
+    struct dirent *de;  \
+    dx_t *d;  \
+    int rv; \
+ \
+    d = dxtab_find(dir); \
+    if(d == NULL) return -1; \
+    if(d->dx_fnd == DxDevEnd) { \
+	*result = NULL; \
+	return 0; \
+    } \
+  \
+    if(orig == NULL) { \
+	orig = dlsym(RTLD_NEXT, #name); \
+	if(orig == NULL) return -1; \
+    } \
+    log("#1" #name "\n"); \
+ \
+    if(d->dx_fnd != DxMkDir) { \
+	rv = orig(d->dx_dir, entry, result);  \
+	de = *result; \
+    } else { \
+log("#2" #name "\n"); \
+	de = NULL; \
+	d->dx_fnd = DxDev; \
+	rv = 0; \
+    } \
+    de = common_##name(d, de); \
+    *result = de; \
+    if(d->dx_fnd == DxDevEnd) { \
+	if(de != NULL) { \
+	    memcpy(entry, de, sizeof *de); \
+	} \
+	rv = 0; \
+    } \
+ \
+    return rv; \
+}
+
+MKREADDIR_R(readdir_r, dirent)
+MKREADDIR_R(readdir64_r, dirent64)
+
 #define FUNARGS(...) , __VA_ARGS__
 #define MKDIRFUN(ret, reterr, name, argts, args) \
 ret name argts \

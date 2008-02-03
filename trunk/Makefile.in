@@ -24,6 +24,7 @@ bindir=@prefix@@bindir@
 mandir=@prefix@@mandir@
 
 SRC := \
+normfile.c \
 palettes.c \
 scale.c \
 util.c \
@@ -31,6 +32,7 @@ dv4l.c
 
 INCS := \
 palettes.h \
+normfile.h \
 scale.h \
 util.h
 
@@ -55,10 +57,11 @@ all: dv4l libdv4l.so dv4lstart
 dv4l: $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ)
 
-libdv4l.so: interdv4l.c scale.c palettes.c util.c $(INCS)
-	$(CC) -Wall -shared -fpic -Wl,-soname,$@ \
+libdv4l.so: interdv4l.c normfile.c scale.c palettes.c util.c $(INCS)
+	$(CC) -Wall -O3 -shared -fpic -Wl,-soname,$@ \
 	-D DV4LLIBNAME=@prefix@@libdir@/libdv4l.so \
-	-ldl -lraw1394 -liec61883 -ldv $< scale.c palettes.c util.c -o $@
+	-ldl -lraw1394 -liec61883 -ldv $< \
+	normfile.c scale.c palettes.c util.c -o $@
 	
 dv4lstart:
 	./mkdv4lstart @prefix@@libdir@ $(VER)

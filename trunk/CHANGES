@@ -1,3 +1,9 @@
+0.99
+- mmap mode for dv4lstart
+- command line options for dv4lstart
+- look for free /dev/video device instead of claiming /dev/video0
+
+
 0.98
 - dv4lstart for camcorder access without vloopback
 

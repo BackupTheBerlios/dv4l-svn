@@ -27,6 +27,10 @@ do
         DV4L_COLORCORR=1
         export DV4L_COLORCORR
         ;;
+    -r | --rgb-only)
+	DV4L_RGBONLY=1
+	export DV4L_RGBONLY
+	;;
     -v | --verbose)
         shift
         DV4L_VERBOSE=\$1

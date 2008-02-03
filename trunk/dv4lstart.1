@@ -31,6 +31,13 @@ Check your 1394 driver config by starting
 from your shell. After turning on your camera, a video window should
 appear. If this works, dv4lstart should work as well.
 
+Inside 
+.I command,
+use /dev/video0 or /dev/v4l/video0 as video device.
+.B dv4lstart
+temporarily replaces any existing video device residing under /dev/video0 or
+/dev/v4l/video0.
+
 .SH OPTIONS
 .TP
 .BI "\-c, \-\-color\-correction"
