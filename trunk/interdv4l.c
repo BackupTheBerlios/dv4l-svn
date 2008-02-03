@@ -29,8 +29,10 @@
 #include <libiec61883/iec61883.h>
 #include <libdv/dv.h>
 #include <asm/ioctl.h>
+#include <attr/xattr.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 #include <libgen.h>
 #include <errno.h>
 #include <grp.h>
@@ -80,6 +82,7 @@ typedef struct {
     int vnoredir;
     int vminor;
     int vrgbonly;
+    time_t vtime;
 } vid_context_t;
 
 static vid_context_t vctx = { 0 };
@@ -103,6 +106,9 @@ debug(#name " is videodev <%s>\n", path); \
 	    buf->st_gid = vidgid; \
 	    buf->st_blksize = 4096; \
 	    buf->st_nlink = 1; \
+	    buf->st_atime = time(NULL); \
+	    buf->st_mtime = vctx.vtime; \
+	    buf->st_ctime = vctx.vtime; \
 	    rv = 0; \
 	} else { \
 	    normalize(path, resolved); \
@@ -242,6 +248,7 @@ static void init_vctx()
 	sprintf(vctx.vdevalt, "/dev/v4l/video%d", m);
     }
     vctx.vminor = m;
+    vctx.vtime = time(NULL);
     sprintf(vctx.vdevbase, "video%d", m);
     vctx.vnoredir = 0;
 }
@@ -1134,11 +1141,10 @@ struct dirent *common_##name(dx_t *d, struct dirent *de) \
     switch(d->dx_fnd) {  \
 	case DxDev:  \
 	    if(de == NULL) { \
-log("#3common_" #name "\n"); \
 		memset(&d->de, 0, sizeof(struct dirent64));  \
 		d->de.dirent.d_type = DT_CHR;  \
 		strcpy(d->de.dirent.d_name, vctx.vdevbase);  \
-		err("inserting <%s>\n", vctx.vdevbase); \
+		log("common_" #name " inserting <%s>\n", vctx.vdevbase); \
 		de = &d->de.dirent;  \
 		d->dx_fnd = DxDevEnd;  \
 	    }; \
@@ -1281,3 +1287,38 @@ log("set vpmmap to NULL\n");
     return rv;
 }
 
+#define MKGETXATTR(name) \
+ssize_t name(const char *path, const char *name, \
+		void *value, size_t size) \
+{ \
+    static ssize_t (*orig)(const char *, const char *, \
+		    void *, size_t) = NULL; \
+    char buf[PATH_MAX]; \
+    ssize_t rv; \
+ \
+    if(orig == NULL) { \
+	orig = dlsym(RTLD_NEXT, #name); \
+	if(orig == NULL) { \
+	    err("symbol " #name " not found\n"); \
+	    return -1; \
+	} \
+    } \
+    rv = orig(path, name, value, size); \
+    if(rv == -1) { \
+	if(is_videodev(path)) { \
+log(#name " path <%s> name <%s>\n", path, name); \
+	    errno = EOPNOTSUPP; \
+	} else { \
+log(#name " path <%s> name <%s>\n", path, name); \
+	    normalize(path, buf); \
+	    if(strcmp("/dev/v4l", buf) == 0) { \
+		errno = EOPNOTSUPP; \
+	    } \
+	} \
+    } \
+ \
+    return rv; \
+} 
+
+MKGETXATTR(getxattr)
+MKGETXATTR(lgetxattr)

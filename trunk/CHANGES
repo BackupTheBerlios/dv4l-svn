@@ -1,7 +1,9 @@
 0.99
+- look for free /dev/video device instead of claiming /dev/video0
 - mmap mode for dv4lstart
 - command line options for dv4lstart
-- look for free /dev/video device instead of claiming /dev/video0
+- set time for stat calls
+- hooks for readdir_r, lstat, access, getxattr, lgetxattr
 
 
 0.98
