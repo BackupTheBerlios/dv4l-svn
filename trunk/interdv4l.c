@@ -53,7 +53,8 @@
 
 #define VIDEOGROUP "video"
 #define VIDEODEV "/dev/video0"
-#define VIDEOV4LDEV "/dev/v4l/video0"
+#define VIDEOV4L "/dev/v4l"
+#define VIDEOV4LDEV VIDEOV4L "/video0"
 static int fake_fd = -1;
 
 
@@ -113,7 +114,7 @@ debug(#name " is videodev <%s>\n", path); \
 	} else { \
 	    normalize(path, resolved); \
 debug("#2" #name " <%s>\n", resolved); \
-	    if(strcmp("/dev/v4l", resolved) == 0) { \
+	    if(strcmp(VIDEOV4L, resolved) == 0) { \
 debug("#3" #name " <%s>\n", resolved); \
 		memset(buf, 0, sizeof *buf); \
 		buf->st_mode = S_IFDIR | S_IRUSR | S_IWUSR | S_IXUSR \
@@ -214,11 +215,25 @@ log("access <%s>\n", path);
     return rv;
 }
 
+#undef LOOK4FREEDEV
 static int scan_dev(char *devname, const char *devtmpl)
 {
+#ifdef LOOK4FREEDEV
     struct stat statb;
     int i;
 
+    /*
+     * This code looks for a free video device number
+     *
+     * As there is no real benefit for the user in doing so,
+     * this code is currently not used.
+     *
+     * To access a real V4L device under /dev/video0, an
+     * application can just be started without dv4lstart.
+     *
+     * As there might be a compelling use case I don't know of,
+     * this code stays for the time being.
+     */
     for(i = 0; i < 10; ++i) {
 	sprintf(devname, devtmpl, i);
 	if(stat(devname, &statb) < 0) {
@@ -226,6 +241,11 @@ static int scan_dev(char *devname, const char *devtmpl)
 	    return i;
 	}
     }
+#else
+    sprintf(devname, devtmpl, 0);
+
+    return 0;
+#endif
 
     return -1;
 }
@@ -235,9 +255,12 @@ static void init_vctx()
     int m;
 
     vctx.vnoredir = 1;
+    /*
+     * see scan_dev comment for rationale behin this code
+     */
     m = scan_dev(vctx.vdevname, "/dev/video%d");
     if(m < 0) {
-	m = scan_dev(vctx.vdevname, "/dev/v4l/video%d");
+	m = scan_dev(vctx.vdevname, VIDEOV4L "/video%d");
 	if(m < 0) {
 	    strcpy(vctx.vdevname, VIDEODEV);
 	    m = 0;
@@ -245,7 +268,7 @@ static void init_vctx()
 	    sprintf(vctx.vdevalt, "/dev/video%d", m);
 	}
     } else {
-	sprintf(vctx.vdevalt, "/dev/v4l/video%d", m);
+	sprintf(vctx.vdevalt, VIDEOV4L "/video%d", m);
     }
     vctx.vminor = m;
     vctx.vtime = time(NULL);
@@ -253,6 +276,9 @@ static void init_vctx()
     vctx.vnoredir = 0;
 }
 
+/*
+ * check if a name matches our simulated device
+ */
 static int is_videodev(const char *name)
 {
     char dir[PATH_MAX];
@@ -691,7 +717,7 @@ debug("#1 dv4l open libdv_init\n"); \
 	gettimeofday(&vctx.vlastcomplete, NULL); \
 	vctx.vcap.maxwidth = 0; \
 	vctx.vcap.maxheight = 0; \
-debug("#2 dv4l open vfd %d fake_fd %d\n", vctx.vfd, fake_fd); \
+log("#2 dv4l open vfd %d fake_fd %d\n", vctx.vfd, fake_fd); \
 	get_camsize(&vctx); \
 	vctx.vwin.width = vctx.vcap.maxwidth; \
 	vctx.vwin.height = vctx.vcap.maxheight; \
@@ -1177,11 +1203,14 @@ struct dirent *name(DIR *dir)  \
 	if(orig == NULL) return NULL;  \
     }  \
   \
-log("#1" #name "\n"); \
     if(d->dx_fnd != DxMkDir) { \
 	de = orig(d->dx_dir);  \
+	if(de != NULL) { \
+	    if(strcmp(de->d_name, vctx.vdevbase) == 0) { \
+		d->dx_fnd = DxDevFnd; \
+	    } \
+	} \
     } else { \
-log("#2" #name "\n"); \
 	de = NULL; \
 	d->dx_fnd = DxDev; \
     } \
@@ -1218,6 +1247,11 @@ struct dirent **result) \
     if(d->dx_fnd != DxMkDir) { \
 	rv = orig(d->dx_dir, entry, result);  \
 	de = *result; \
+	if(de != NULL) { \
+	    if(strcmp(de->d_name, vctx.vdevbase) == 0) { \
+		d->dx_fnd = DxDevFnd; \
+	    } \
+	} \
     } else { \
 log("#2" #name "\n"); \
 	de = NULL; \

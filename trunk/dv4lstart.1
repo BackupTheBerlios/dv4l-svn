@@ -33,8 +33,11 @@ appear. If this works, dv4lstart should work as well.
 
 Inside 
 .I command,
-use the new video device created by
+use /dev/video0.
+Any existing, real V4L device named /dev/video0 can not be accessed
+from an application started with
 .B dv4lstart
+(applications started normally can access the real /dev/video0)
 
 .SH OPTIONS
 .TP

@@ -1,9 +1,20 @@
 0.99
-- look for free /dev/video device instead of claiming /dev/video0
 - mmap mode for dv4lstart
+  dv4lstart can now be used for most applications; that
+  means the installation of the vloopback kernel module
+  is no longer necessary (but there's no need to switch
+  if dv4l + vloopback works for you).
+
 - command line options for dv4lstart
+  like dv4l, dv4lstart can now take command line options to
+  exchange red/blue, to disable YUV, and to get debug
+  output. see man page for examples
+
 - set time for stat calls
-- hooks for readdir_r, lstat, access, getxattr, lgetxattr
+  ls -l /dev/video0 now shows the current access time instead
+  of Jan 1970
+- To run kopete with dv4lstart, hooks for readdir_r, lstat, access,
+  getxattr, lgetxattr have been added
 
 
 0.98

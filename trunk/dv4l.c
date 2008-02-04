@@ -639,8 +639,7 @@ to provide a virtual video4linux camera.\n\
 -d, --device     vloopback-input-device (eg /dev/v4l/video0)\n\
 -r, --rgb-only   disable yuv palette usage for better performance\n\
 -s, --size WxH   set capture size and use slower copy mode, only\n\
-                 required for some V4L programs \
-(max " XSTR(MAXW) "x" XSTR(MAXH) ")\n\
+                 required for some V4L programs\n\
 -v, --verbose    verbosity-level (0 - no output; 3 - all messages)\n\
 -h, --help       display this help and exit\n",
 cmd, DV4LVERSION);
