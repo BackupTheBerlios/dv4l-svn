@@ -1,8 +1,32 @@
+/* Copyright (C) 2008 Free Software Foundation, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; version 2.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ *
+ * Author: Wolfgang Beck <bewo at users.berlios.de> 2008
+ */
+
 #include <limits.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/*
+ * Unfortunately, realpath(3) requires that the path exists.
+ * As we are faking files, we need to replicate its
+ * functionality, at least the part that doesn't deal with links
+ */
 
 typedef enum { Null, Lim, Dot1, Dot2, DName, Fin } state_t;
 
