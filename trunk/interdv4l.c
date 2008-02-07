@@ -18,7 +18,6 @@
 
 #include <sys/types.h>
 #include <sys/select.h>
-#include <sys/time.h>
 #include <sys/mman.h>
 
 #include <stdio.h>
@@ -29,7 +28,7 @@
 #include <libiec61883/iec61883.h>
 #include <libdv/dv.h>
 #include <asm/ioctl.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
