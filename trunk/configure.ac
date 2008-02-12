@@ -1,4 +1,5 @@
-AC_INIT(dv4l, 0.99, dv4l-0.99.tar.gz)
+AC_INIT(dv4l, 1.0, dv4l-1.0.tar.gz)
+
 
 AC_CHECK_HEADER([libraw1394/raw1394.h],
     [AC_DEFINE(HAVE_RAW1394, 1,
@@ -15,6 +16,12 @@ AC_CHECK_HEADER([libdv/dv.h],
 	[Define to 1 if you have libdv/dv.h])],
 	[AC_MSG_ERROR([libfv missing])])
 
-AC_CONFIG_FILES([Makefile config.h])
+AC_CHECK_HEADER([sys/xattr.h],
+    [AC_DEFINE(HAVE_XATTR, 1,
+	[Define to 1 if you have sys/xattr.h])],
+	[AC_MSG_WARN([xattr missing, expect non-critical error messages])])
+
+AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_FILES([Makefile version.h])
 AC_OUTPUT
 

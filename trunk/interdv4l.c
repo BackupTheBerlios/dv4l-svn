@@ -28,7 +28,9 @@
 #include <libiec61883/iec61883.h>
 #include <libdv/dv.h>
 #include <asm/ioctl.h>
+#ifdef HAVE_XATTR
 #include <sys/xattr.h>
+#endif
 #include <string.h>
 #include <strings.h>
 #include <time.h>
@@ -45,6 +47,7 @@
 #include <linux/videodev.h>
 #include <dirent.h>
 #include "config.h"
+#include "version.h"
 #include "normfile.h"
 #include "scale.h"
 #include "palettes.h"
@@ -214,7 +217,7 @@ log("access <%s>\n", path);
     return rv;
 }
 
-#undef LOOK4FREEDEV
+#define LOOK4FREEDEV
 static int scan_dev(char *devname, const char *devtmpl)
 {
 #ifdef LOOK4FREEDEV
@@ -257,7 +260,12 @@ static void init_vctx()
     /*
      * see scan_dev comment for rationale behin this code
      */
-    m = scan_dev(vctx.vdevname, "/dev/video%d");
+    if(getenv("DV4L_NEWDEV") != NULL) {
+	m = scan_dev(vctx.vdevname, "/dev/video%d");
+    } else {
+	strcpy(vctx.vdevname, VIDEODEV);
+	m = 0;
+    }
     if(m < 0) {
 	m = scan_dev(vctx.vdevname, VIDEOV4L "/video%d");
 	if(m < 0) {
@@ -1320,6 +1328,7 @@ log("set vpmmap to NULL\n");
     return rv;
 }
 
+#ifdef HAVE_XATTR
 #define MKGETXATTR(name) \
 ssize_t name(const char *path, const char *name, \
 		void *value, size_t size) \
@@ -1355,3 +1364,4 @@ log(#name " path <%s> name <%s>\n", path, name); \
 
 MKGETXATTR(getxattr)
 MKGETXATTR(lgetxattr)
+#endif

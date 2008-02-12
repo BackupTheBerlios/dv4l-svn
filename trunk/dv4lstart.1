@@ -9,12 +9,13 @@ dv4lstart \- redirect V4L API to access a camcorder from a V4L program
 
 .SH DESCRIPTION
 .B dv4lstart
-enables programs using the video4linux API to access a dv1394
-(Firewire) camcorder. Using the LD_PRELOAD facility, it intercepts
-calls to the V4L API and makes the camcorder's videostream available
-to the application given by the
+enables
 .I command
-parameter.
+to access a dv1394
+(Firewire) camcorder by using the video4linux (V4L) API.
+.B dv4lstart
+uses the LD_PRELOAD facility to intercept
+calls to the V4L API and make the camcorder's videostream available.
 
 Check that LD_PRELOAD works in your environment by starting
 
@@ -22,7 +23,7 @@ Check that LD_PRELOAD works in your environment by starting
 
 The resulting output should look like
 
-crw-rw---- 0 root video 81, 10 Jan  1  1970 /dev/video0
+crw-rw---- 0 root video 81, 0 Jan  1  1970 /dev/video0
 
 Check your 1394 driver config by starting
 
@@ -43,6 +44,11 @@ from an application started with
 .TP
 .BI "\-c, \-\-color\-correction"
 Set this option if red objects look blue.
+.TP
+.BI "\-n, \-\-new\-dev"
+Tell dv4lstart to simulate a new video device rather than
+overriding /dev/video0. Set this option if your application
+needs to access other video devices.
 .TP
 .BI "\-r, \-\-rgb\-only
 Set this option to prevent V4L applications from choosing

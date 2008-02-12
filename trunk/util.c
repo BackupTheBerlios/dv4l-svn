@@ -39,10 +39,10 @@ void _trace(int level, const char *file, int lineno, const char *fmt, ...)
 
     if(level <= tracelevel) {
 	if(tracelevel > 1) {
-	    printf("%s +%d: ", file, lineno);
+	    fprintf(stderr, "%s +%d: ", file, lineno);
 	}
 	va_start(ap, fmt);
-	vprintf(fmt, ap);
+	vfprintf(stderr, fmt, ap);
 	va_end(ap);
     }
 }

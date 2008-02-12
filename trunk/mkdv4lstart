@@ -14,6 +14,11 @@ usage () {
     echo "    -c, --color-correction"
     echo "        Set this option if red objects look blue."
     echo
+    echo "    -n, --new-dev"
+    echo "        Tell dv4lstart to simulate a new video device rather"
+    echo "        than overriding /dev/video0. Set this option if your"
+    echo "        application needs to access other video devices."
+    echo
     echo "    -r, --rgb-only"
     echo "        Set  this  option  to prevent V4L applications from"
     echo "        choosing YUV palettes. Try this option if you get low"
@@ -32,6 +37,10 @@ do
         DV4L_COLORCORR=1
         export DV4L_COLORCORR
         ;;
+    -n | --new-dev)
+	DV4L_NEWDEV=1
+	export DV4L_NEWDEV
+	;;
     -r | --rgb-only)
 	DV4L_RGBONLY=1
 	export DV4L_RGBONLY

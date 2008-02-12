@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007 Free Software Foundation, Inc.
+ * Copyright (C) 2008 Free Software Foundation, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -17,12 +17,9 @@
  * Author: Wolfgang Beck <bewo at users.berlios.de> 2007
  */
 
-
-#ifndef _config_h
-#define _config_h
+#ifdef _version_h
+#define _version_h
 
 #define DV4LVERSION "@PACKAGE_VERSION@"
-
-#undef HAVE_XATTR
 
 #endif

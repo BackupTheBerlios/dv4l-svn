@@ -1,3 +1,9 @@
+1.0
+- new dv4lstart option -n, --new-dev (see man page)
+- fixed xattr.h location (thanks mariusm)
+- xattr.h config check
+- use stderr for debugging output
+
 0.99
 - mmap mode for dv4lstart
   dv4lstart can now be used for most applications; that

@@ -15,7 +15,7 @@
 #
 # Author: Wolfgang Beck <bewo at users.berlios.de> 2007
 
-VER := 0.99
+VER := 1.0
 CFLAGS := -Wall -O3 -MMD 
 LDFLAGS := -lraw1394 -liec61883 -ldv
 
@@ -41,6 +41,7 @@ CHANGES \
 LICENSE \
 Makefile.in \
 config.h.in \
+version.h.in \
 configure.ac \
 configure \
 mkdv4lstart \
@@ -60,8 +61,8 @@ dv4l: $(OBJ)
 libdv4l.so: interdv4l.c normfile.c scale.c palettes.c util.c $(INCS)
 	$(CC) -Wall -O3 -shared -fpic -Wl,-soname,$@ \
 	-D DV4LLIBNAME=/usr/local${exec_prefix}/lib/libdv4l.so \
-	-ldl -lraw1394 -liec61883 -ldv normfile.c $< \
-	scale.c palettes.c util.c -o $@
+	-ldl -lraw1394 -liec61883 -ldv $< \
+	normfile.c scale.c palettes.c util.c -o $@
 	
 dv4lstart:
 	./mkdv4lstart /usr/local${exec_prefix}/lib $(VER)

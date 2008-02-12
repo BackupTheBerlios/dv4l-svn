@@ -37,6 +37,7 @@
 #include <libiec61883/iec61883.h>
 #include <libdv/dv.h>
 #include "config.h"
+#include "version.h"
 #include "scale.h"
 #include "palettes.h"
 #include "util.h"
