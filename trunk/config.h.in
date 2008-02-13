@@ -21,8 +21,6 @@
 #ifndef _config_h
 #define _config_h
 
-#define DV4LVERSION "@PACKAGE_VERSION@"
-
 #undef HAVE_XATTR
 
 #endif

@@ -17,7 +17,7 @@
  * Author: Wolfgang Beck <bewo at users.berlios.de> 2007
  */
 
-#ifdef _version_h
+#ifndef _version_h
 #define _version_h
 
 #define DV4LVERSION "@PACKAGE_VERSION@"
